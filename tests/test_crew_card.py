@@ -7,6 +7,7 @@ directory so the config/roles lookups read test fixtures and never the live prof
 Run:  python3 -m unittest discover -s tests -t .      (from the repo root)
       python3 -m pytest tests -q
 """
+import argparse
 import json
 import os
 import shutil
@@ -16,6 +17,7 @@ import time
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "scripts"))
@@ -783,6 +785,94 @@ class VerdictLineTests(CardTestCase):
         self.assertEqual(0, crew_card.rework_fails("t_v"))
         self.put(1, ts=1600.0)
         self.assertEqual(1, crew_card.rework_fails("t_v"))
+
+
+class HandBackTests(CardTestCase):
+    """The release valve of the rework loop: what the second FAIL does to the card.
+
+    Every existing `verdict` test passes --no-hand-back, so the branch that actually moves the board
+    - request-changes to the writer, or a transient block when there is no review to return - had never
+    run. These tests drive cmd_verdict twice with a proof that fails and watch the kanban calls."""
+
+    PROOF = "sh -c 'exit 1'"
+    BODY = ("Role: worker\nCoordinator: crew-coordinator\nGOAL: g\nDone when: d\n\n"
+            "proof command: %s\n" % PROOF)
+
+    def setUp(self):
+        super().setUp()
+        self.db = os.path.join(self.home, "kanban.db")
+        conn = sqlite3.connect(self.db)
+        conn.executescript(
+            "create table tasks (id text primary key, title text, status text, assignee text, body text);"
+            "create table task_events (id integer primary key autoincrement, task_id text, run_id integer,"
+            " kind text, payload text, created_at integer);")
+        conn.execute("insert into tasks values ('t_h', 't', 'running', 'crew-worker', ?)", (self.BODY,))
+        conn.commit()
+        conn.close()
+        os.environ["HERMES_KANBAN_DB"] = self.db
+        crew_card.record_origin("t_h", env={"origin": "", "session": "s"}, proof_cmd=self.PROOF)
+        self.kanban_calls = []
+        failing = mock.Mock(return_value=SimpleNamespace(rc=1, out="build failed: 3 errors", blocked=None))
+        run_proof = mock.patch.object(crew_card.crew_safety, "run_proof", failing)
+        run_proof.start()
+        self.addCleanup(run_proof.stop)
+
+    def args(self, no_hand_back=False):
+        return argparse.Namespace(card="t_h", command=None, timeout=20, no_hand_back=no_hand_back,
+                                  by="crew-verifier", for_event=None)
+
+    def board_that(self, request_changes_rc, block_rc=0):
+        """The kernel's CLI, answered: request-changes may be refused when the card has no review run."""
+        def fake(cmd, timeout=120):
+            self.kanban_calls.append(cmd)
+            rc = request_changes_rc if cmd[0] == "request-changes" else block_rc
+            return SimpleNamespace(returncode=rc, stdout="ok", stderr="")
+        kanban = mock.patch.object(crew_card, "_kanban", fake)
+        kanban.start()
+        self.addCleanup(kanban.stop)
+
+    def fail_once(self):
+        self.assertEqual(1, crew_card.cmd_verdict(self.args()))
+
+    def test_the_first_fail_moves_the_board_not_at_all(self):
+        self.board_that(0)
+        self.fail_once()
+        self.assertEqual([], self.kanban_calls)
+
+    def test_the_second_fail_returns_the_card_to_its_writer(self):
+        self.board_that(0)
+        self.fail_once()
+        self.assertEqual(3, crew_card.cmd_verdict(self.args()))
+        self.assertEqual(["request-changes"], [c[0] for c in self.kanban_calls])
+        self.assertIn("2 failed verifications", self.kanban_calls[0][2])
+        self.assertIn("build failed", self.kanban_calls[0][2])
+
+    def test_a_card_with_no_review_to_return_blocks_as_transient_for_the_coordinator(self):
+        self.board_that(1)
+        self.fail_once()
+        self.assertEqual(3, crew_card.cmd_verdict(self.args()))
+        self.assertEqual(["request-changes", "block"], [c[0] for c in self.kanban_calls])
+        self.assertEqual("transient", self.kanban_calls[1][3])
+
+    def test_no_hand_back_reports_the_second_fail_and_still_moves_nothing(self):
+        self.board_that(0)
+        self.fail_once()
+        self.assertEqual(3, crew_card.cmd_verdict(self.args(no_hand_back=True)))
+        self.assertEqual([], self.kanban_calls)
+
+    def test_a_coordinator_fix_starts_the_count_again_so_the_next_fail_is_only_the_first(self):
+        self.board_that(0)
+        self.fail_once()
+        self.assertEqual(3, crew_card.cmd_verdict(self.args()))
+        self.kanban_calls = []
+        conn = sqlite3.connect(self.db)
+        conn.execute("insert into task_events (task_id, kind, payload, created_at) values (?,?,?,?)",
+                     ("t_h", "crew_decision", json.dumps({"decision": "retry", "fix": "re-scoped"}),
+                      int(time.time()) + 60))
+        conn.commit()
+        conn.close()
+        self.assertEqual(1, crew_card.cmd_verdict(self.args()))
+        self.assertEqual([], self.kanban_calls)
 
 
 class LedgerSpentTests(CardTestCase):
