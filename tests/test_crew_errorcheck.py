@@ -138,6 +138,22 @@ class RunAndEventRecordsTests(BoardCase):
         self.add_event(cid, "heartbeat", {"x": 1}, ts=1000)
         self.assertEqual([], EC.event_records(self.db, cid))
 
+    def test_an_event_with_no_reason_still_says_what_happened(self):
+        # the kernel writes block_loop_detected with a null reason: the kind is then all the record has, and a
+        # join of empty payload fields must not come back as two spaces wearing the look of text.
+        cid = self.card()
+        self.add_event(cid, "block_loop_detected", {"reason": None, "kind": None, "recurrences": 3}, ts=1000)
+        self.assertEqual("block_loop_detected", EC.event_records(self.db, cid)[0]["text"])
+
+    def test_two_records_in_the_same_second_are_ordered_by_which_one_explains_itself(self):
+        # the dispatcher's blocked run and the kernel's reaction to it land in one second; the reaction is the
+        # later, better-informed fact, so it has to be the one root_cause reads.
+        cid = self.card()
+        self.add_run(cid, status="blocked", outcome="blocked", ts=1000)
+        self.add_event(cid, "block_loop_detected", {"reason": None}, ts=1000)
+        recs = EC.collect(cid, self.db)["records"]
+        self.assertEqual("block_loop_detected", recs[0]["status"])
+
     def test_a_verdict_fail_line_is_a_record_of_what_the_check_said(self):
         cid = self.card()
         crew_card.record_verdict(cid, "pytest -q", 1, "FAILED test_x::test_y - assert 0 == 1", 1.2, by="crew-verifier")
@@ -223,6 +239,18 @@ class RootCauseTests(BoardCase):
         self.assertEqual("other", found["cause"])
         self.assertEqual("decide", found["owner"])
         self.assertEqual(0, found["records"])
+
+    def test_a_card_the_kernel_caught_looping_is_read_from_the_board_not_its_rows(self):
+        # the real t_19d08ec9 shape: the blocked run and the kernel's reaction to it land in one second. Rebuilt
+        # from a live card's records (Temp/fixlive), where that pair answered `other` on empty evidence until
+        # the same-second ordering and the blank text join were fixed.
+        cid = self.card(status="blocked")
+        now = int(time.time()) + 10
+        self.add_run(cid, status="blocked", outcome="blocked", ts=now)
+        self.add_event(cid, "block_loop_detected", {"reason": None, "recurrences": 3}, ts=now)
+        found = EC.root_cause(cid, EC.collect(cid, self.db)["records"])
+        self.assertEqual("repeat_block", found["cause"])
+        self.assertIn("block_loop_detected", found["evidence"])
 
     def test_every_cause_names_an_owner_and_a_meaning(self):
         for name, owner, meaning in EC.CAUSES:
@@ -604,12 +632,16 @@ class BoardStateTests(BoardCase):
         self.assertIn("assertion error", found["evidence"])
         self.assertFalse(found["plan"]["complete"])
 
-    def test_a_card_still_in_triage_has_no_cause_to_name_and_no_completion_to_claim(self):
+    def test_a_card_still_in_triage_is_read_as_the_loop_the_kernel_put_it_in(self):
+        """Superseded 2026-10-13: this pinned `other`/`decide` on the theory that a triage card has no evidence.
+        It has evidence - the kernel only reaches triage by counting the same block twice, and it writes
+        `block_loop_detected` doing it. While the same-second records were ordered by insertion rather than by
+        which one explains itself, that event lost to a bare blocked run and the card read as causeless."""
         cid = self.card(status="triage")
         found = EC.check_card(cid, self.db)
-        self.assertEqual("other", found["cause"])                                        # no evidence, no invented cause
-        self.assertEqual("decide", found["owner"])
-        self.assertEqual("none", found["plan"]["proof"]["verdict"])                       # nothing has run
+        self.assertEqual("repeat_block", found["cause"])                    # the loop is the fact on the card
+        self.assertEqual("owner", found["owner"])                           # and a loop is the owner's call
+        self.assertEqual("none", found["plan"]["proof"]["verdict"])         # nothing has run
         self.assertFalse(found["plan"]["complete"])
 
     def test_a_card_the_board_called_done_with_a_failing_proof_is_still_read_as_failing(self):

@@ -40,6 +40,11 @@ UNREAD_KINDS = ("crashed", "rate_limited", "protocol_violation", "spawn_failed",
                 "terminal_worker_reaped", "completion_blocked_hallucination", "gave_up",
                 "block_loop_detected", "changes_requested")
 REASON_CHARS = 700
+# Records the kernel wrote about the failure *pattern* rather than one more failure. Their own status names the
+# cause, so they are not judged on their text: `block_loop_detected` with a null reason still says "this card is
+# looping", which is the thing the owner has to decide about.
+NAMED_STATUSES = ("block_loop_detected", "gave_up", "completion_blocked_hallucination", "spawn_failed",
+                  "timed_out", "crashed")
 PROOF_CANNOT_RUN = ("command not found", "no such file or directory", "unrecognized arguments",
                     "usage:", "permission denied", "externally-managed", "modulenotfounderror",
                     "importerror", "is not a package", "no tests ran", "not a directory")
@@ -85,7 +90,8 @@ def event_records(db, card_id):
         except ValueError:
             data = {}
         detail = data if isinstance(data, dict) else {}
-        text = " ".join(str(detail.get(k) or "") for k in ("error", "reason", "summary_preview")) or row["kind"]
+        text = " ".join(str(detail.get(k) or "") for k in ("error", "reason", "summary_preview")).strip() \
+            or row["kind"]
         out.append({"source": "event", "id": row["id"], "status": row["kind"],
                     "kind": crew_heal.wall_kind(text if isinstance(text, str) else row["kind"]),
                     "ts": row["created_at"] or 0, "text": str(text), "data": detail})
@@ -111,8 +117,13 @@ def collect(card_id, db=None):
     for rec in recs:
         if rec["kind"] == "other":
             rec["kind"] = wall_kind_of(rec)
-    recs.sort(key=lambda r: -(r["ts"] or 0))
+    recs.sort(key=lambda r: (-(r["ts"] or 0), 0 if _names_a_cause(r) else 1))
     return {"card": card_id, "records": recs}
+
+
+def _names_a_cause(rec):
+    """Whether a record says what happened, or only that something did - the tie-break inside one second."""
+    return rec["kind"] != "other" or rec["status"] in NAMED_STATUSES
 
 
 def wall_kind_of(rec):
