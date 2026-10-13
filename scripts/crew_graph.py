@@ -203,18 +203,21 @@ def run_length_seconds(started, ended, status=None, outcome=None, min_s=PRIOR_RU
     return d if d >= min_s else None
 
 
-def prior_run_seconds(runs, min_s=PRIOR_RUN_MIN_S):
+def prior_run_seconds(runs, profile=None, min_s=PRIOR_RUN_MIN_S):
     """The card's own finished run lengths, oldest first - the history that actually predicts this card.
 
-    Measured on this board (leave-one-out, runs >= 2 min): the card's median over its earlier runs predicts the
-    next run's TOTAL length at 15% median relative error, and its previous run at 19%, against 39% for one
-    number across everything. Every finished run of the card counts whatever role ran it - a card re-visited by
-    the verifier is still the same card's work, and that is the set the number above was measured on. Runs
-    shorter than two minutes are mostly re-spawns after a crash, and leaving them in roughly doubles the error,
-    so they are not counted as history."""
+    Measured on this board (leave-one-out, runs >= 2 min, same profile, `Temp/eta_conditional.py`): the card's
+    median over its earlier runs predicts the next run's TOTAL length at 15% median relative error (n=192) and
+    its previous run at 19% (n=234), against 39% for one number across everything. The profile filter is part
+    of that measurement and not decoration: the same median over every run of the card whoever ran it - a
+    worker's 20 minutes mixed with a verifier's 2 - measures 25% (`Temp/eta_history.py`). Runs shorter than two
+    minutes are mostly re-spawns after a crash, and leaving them in roughly doubles the error, so they are not
+    counted as history either."""
     out = []
     for r in runs or []:
-        _run_id, _profile, status, outcome, _summary, _error, rstart, rend, _rhb = r
+        _run_id, rprofile, status, outcome, _summary, _error, rstart, rend, _rhb = r
+        if profile and rprofile != profile:
+            continue
         d = run_length_seconds(rstart, rend, status, outcome, min_s)
         if d is not None:
             out.append(d)
@@ -316,7 +319,7 @@ def live_run_size(board_db, card_row, run_row, runs=None):
         return None
     if runs is None:
         runs = load_runs(board_db, card_row[0]) if card_row else []
-    size = run_size(prior_run_seconds(runs), role_durations(board_db, profile),
+    size = run_size(prior_run_seconds(runs, profile), role_durations(board_db, profile),
                     max(0.0, time.time() - float(rstart or 0)))
     size["profile"] = profile
     return size
@@ -1680,7 +1683,7 @@ class _Builder(object):
             }
             if rend is None:
                 # a live worker: what runs of this card cost before, as a size - not a countdown
-                size = run_size(prior_run_seconds(runs), role_durations(self.db, profile),
+                size = run_size(prior_run_seconds(runs, profile), role_durations(self.db, profile),
                                 max(0.0, time.time() - float(rstart or 0)))
                 size["profile"] = profile
                 rev["size"] = size

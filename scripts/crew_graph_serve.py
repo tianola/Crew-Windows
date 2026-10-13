@@ -196,7 +196,8 @@ def board_data(include_all=False, older=False):
             for_s = int(now - (live[0][4] or now))
             # what runs of this card cost before, else what the role's cost: a size from history, never a
             # countdown. The tile does its own run scan because its loader's columns differ from load_runs'.
-            prior = [d for d in (CG.run_length_seconds(r[4], r[5], r[3], r[7]) for r in my_runs) if d]
+            prior = [d for d in (CG.run_length_seconds(r[4], r[5], r[3], r[7])
+                                 for r in my_runs if r[2] == profile) if d]
             if profile not in dur_cache:
                 dur_cache[profile] = CG.role_durations(db, profile)
             size = CG.run_size(prior, dur_cache[profile], for_s)

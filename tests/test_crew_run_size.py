@@ -50,6 +50,14 @@ class OneRun(unittest.TestCase):
     def test_junk_typed_times_are_not_history(self):
         self.assertIsNone(cg.run_length_seconds("x", "y", "done", "completed"))
 
+    def test_prior_runs_of_another_profile_on_the_same_card_are_not_this_run_history(self):
+        # the 15% figure was measured over same-profile runs: a worker's 20 minutes and a verifier's 2 minutes
+        # on one card are two different sizes of work, and mixing them measures 25%
+        runs = [run_row(1, ended=1600), run_row(2, profile="crew-verifier", ended=1300)]
+        self.assertEqual(cg.prior_run_seconds(runs, "worker"), [600.0])
+        self.assertEqual(cg.prior_run_seconds(runs, "crew-verifier"), [300.0])
+        self.assertEqual(cg.prior_run_seconds(runs), [600.0, 300.0])   # unfiltered only when nobody asked
+
     def test_prior_runs_keeps_only_the_ones_that_count(self):
         runs = [run_row(1, ended=1600),                      # 600s: history
                 run_row(2, status="running", outcome=None, started=2000, ended=None),   # live: not history
@@ -209,13 +217,14 @@ class Gatherer(unittest.TestCase):
         self.assertEqual(cg.role_durations(None, "worker"), [])
         self.assertEqual(cg.role_durations(self._board(), None), [])
 
-    def test_load_runs_then_prior_seconds_reads_the_whole_card(self):
+    def test_load_runs_then_prior_seconds_reads_the_card_by_profile(self):
         db = self._board()
         runs = cg.load_runs(db, 7)
         self.assertEqual([r[0] for r in runs], sorted(r[0] for r in runs))
-        # a card's history is every finished run on it, whatever role ran it - that is the set the 15% error
-        # was measured on - while a 100s re-spawn on another card never reaches it.
-        self.assertEqual(cg.prior_run_seconds(runs), [600.0, 750.0, 4000.0])
+        self.assertEqual(cg.prior_run_seconds(runs, "worker"), [600.0, 750.0])
+        # the same card's other profile is a different size of work, and the 100s blip on card 8 is not this
+        # card's history at all
+        self.assertEqual(cg.prior_run_seconds(runs, "other"), [4000.0])
 
 
 class Guards(unittest.TestCase):
