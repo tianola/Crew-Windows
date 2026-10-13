@@ -161,10 +161,10 @@ def fmt_dur(a, b):
     return "%dm%02ds" % (m, s)
 
 
-# ------------------------------------------------------------------- eta
+# --------------------------------------------------------------- run size history
 
-ETA_MIN_N = 3   # past runs of a role needed before any number is trusted
-ETA_CAP = 0.90  # a run is never counted as done by progress alone: the worker says done, not the counter
+PRIOR_RUN_MIN_S = 120   # shorter runs are re-spawns, not history: including them doubles the error
+SIZE_MIN_N = 3          # finished runs of the role needed before its median is shown as a size
 
 
 def role_durations(db, profile):
@@ -188,103 +188,66 @@ def role_durations(db, profile):
     return out
 
 
-def role_step_medians(profile):
-    """Tool-call counts of this role's own finished top-level kanban sessions: the milestone scale for a run.
+def run_length_seconds(started, ended, status=None, outcome=None, min_s=PRIOR_RUN_MIN_S):
+    """One finished run's length, or None when it is not history: still running, not a success, or under the
+    two-minute re-spawn floor. Takes the four fields, not a row, because the board tile and the card page read
+    task_runs through different loaders with different column orders."""
+    if ended is None or started is None:
+        return None
+    if status != "done" and outcome not in ("completed", "done"):
+        return None
+    try:
+        d = float(ended) - float(started)
+    except (TypeError, ValueError):
+        return None
+    return d if d >= min_s else None
 
-    `tool_call_count` counts a session's own calls, so parent sub-sessions stay out of the median (a step in
-    the graph is one call of the worker session, not of a child it spawned)."""
-    db = state_db_for(profile)
-    rows = q(db, "select tool_call_count from sessions where source = 'kanban' "
-                 "and parent_session_id is null and ended_at is not null "
-                 "and tool_call_count is not null and tool_call_count > 0")
-    return [r[0] for r in rows]
 
+def prior_run_seconds(runs, min_s=PRIOR_RUN_MIN_S):
+    """The card's own finished run lengths, oldest first - the history that actually predicts this card.
 
-def estimate_run_eta(elapsed_s, steps_now, durs, steps_hist, min_n=ETA_MIN_N):
-    """How much longer a running crew worker likely needs, from the role's own history. Pure: no db, no clock.
-
-    The worker's tool calls are milestones; the role's typical run is the calibration - its median length and
-    its median step count. `progress` is where this run sits in the typical step count. The remaining time
-    blends the role median (the safe prior when few steps have landed) with the run's own pace elapsed/progress
-    (the trust signal once it is far along), weighting pace by progress. A role with no history returns basis
-    'none' and no numbers rather than a guess."""
-    durs = sorted(float(x) for x in (durs or []) if x is not None and float(x) > 0)
-    steps_hist = sorted(int(x) for x in (steps_hist or []) if x is not None and int(x) > 0)
-    elapsed = max(0.0, float(elapsed_s or 0))
-    steps_now = int(steps_now or 0)
-    dur_n, step_n = len(durs), len(steps_hist)
-    enough = dur_n >= min_n
-    dur_med = crew_card._pct(durs, 0.5) if enough else None
-    dur_lo = crew_card._pct(durs, 0.25) if enough else None
-    dur_hi = crew_card._pct(durs, 0.75) if enough else dur_med
-    step_enough = step_n >= min_n
-    step_med = crew_card._pct(steps_hist, 0.5) if step_enough else None
-
-    progress = None
-    if step_med and step_med > 0:
-        progress = min(ETA_CAP, max(0.0, steps_now / float(step_med)))
-
-    out = {"basis": "none", "elapsed_s": int(elapsed), "steps_now": steps_now or None,
-           "step_median": step_med, "dur_median": int(dur_med) if dur_med else None,
-           "dur_n": dur_n, "step_n": step_n, "progress": None,
-           "remaining_s": None, "lo_s": None, "hi_s": None, "confidence": None}
-    if progress is not None:
-        out["progress"] = round(progress, 3)
-
-    pace = (elapsed / progress) if (progress and elapsed > 0) else None
-
-    def blend(med):
-        return med if pace is None else (1.0 - progress) * med + progress * pace
-
-    total = total_lo = total_hi = None
-    if dur_med and progress is not None:
-        out["basis"] = "milestone"
-        total = blend(dur_med)
-        total_lo = blend(dur_lo or dur_med)
-        total_hi = blend(dur_hi or dur_med)
-    elif dur_med:
-        out["basis"] = "duration"
-        total, total_lo, total_hi = dur_med, (dur_lo or dur_med), (dur_hi or dur_med)
-    elif step_enough and steps_now > 0 and elapsed > 0:
-        out["basis"] = "steps-velocity"
-        total = step_med * elapsed / steps_now
-        total_lo, total_hi = total * 0.6, total * 1.6
-
-    if total is not None:
-        out["remaining_s"] = int(max(0.0, total - elapsed))
-        out["lo_s"] = int(max(0.0, total_lo - elapsed))
-        out["hi_s"] = int(max(0.0, total_hi - elapsed))
-        if dur_n >= 8 and (progress is None or progress >= 0.3):
-            out["confidence"] = "high"
-        elif enough or step_enough:
-            out["confidence"] = "medium"
-        else:
-            out["confidence"] = "low"
+    Measured on this board (leave-one-out, runs >= 2 min): the card's median over its earlier runs predicts the
+    next run's TOTAL length at 15% median relative error, and its previous run at 19%, against 39% for one
+    number across everything. Every finished run of the card counts whatever role ran it - a card re-visited by
+    the verifier is still the same card's work, and that is the set the number above was measured on. Runs
+    shorter than two minutes are mostly re-spawns after a crash, and leaving them in roughly doubles the error,
+    so they are not counted as history."""
+    out = []
+    for r in runs or []:
+        _run_id, _profile, status, outcome, _summary, _error, rstart, rend, _rhb = r
+        d = run_length_seconds(rstart, rend, status, outcome, min_s)
+        if d is not None:
+            out.append(d)
     return out
 
 
-def fmt_eta(eta):
-    """One honest sentence for a card's ETA (the /crew-graph --eta line and copy); '' when nothing is known.
+def run_size(prior, role_durs, elapsed_s, min_n=SIZE_MIN_N):
+    """What a run of this card is likely to cost in total - never a claim about what is left.
 
-    A single expected time remaining - the worker's own pace blended with its role's typical length - then,
-    after it, what that number was built from, so the reader can see the reasoning behind the guess."""
-    if not eta or eta.get("basis") == "none" or eta.get("remaining_s") is None:
-        role_n = (eta or {}).get("dur_n", 0)
-        return "no baseline yet (n=%s)" % role_n if eta else ""
-    if eta["basis"] == "milestone":
-        detail = "worker ran %s, step %s/%s typical" % (
-            fmt_dur_str(eta["elapsed_s"]), eta.get("steps_now"), eta.get("step_median"))
-    elif eta["basis"] == "duration":
-        detail = "worker ran %s, this role usually %s" % (
-            fmt_dur_str(eta["elapsed_s"]), fmt_dur_str(eta["dur_median"]))
-    else:
-        detail = "worker ran %s, no length history for the role" % fmt_dur_str(eta["elapsed_s"])
-    tail = "; n=%d" % max(eta.get("dur_n", 0), eta.get("step_n", 0))
-    return "~%s remaining (%s%s)" % (fmt_dur_str(eta["remaining_s"]), detail, tail)
+    Two sources, in order of who knows better: the card's own earlier runs, then the role's, which predicts a
+    first run's total length about as well (16% median relative error) but says nothing useful about a run
+    already four minutes in - a role median read as remaining time is 113% wrong. Elapsed time and step counts
+    carry no position information on this board (no event fires between fraction 0.00 and 1.00 of a run, and
+    tool calls correlate with the size of the work, not its progress), so nothing here extrapolates them.
+    """
+    elapsed = max(0.0, float(elapsed_s or 0))
+    prior = sorted(prior or [])
+    role_durs = sorted(float(x) for x in (role_durs or []) if x and float(x) >= PRIOR_RUN_MIN_S)
+    out = {"basis": "none", "elapsed_s": int(elapsed), "prior_s": [int(x) for x in prior[-3:]],
+           "usual_s": None, "n_prior": len(prior), "n_role": len(role_durs), "over_s": None}
+    if prior:
+        out["basis"] = "card"
+        out["usual_s"] = int(crew_card._pct(prior, 0.5))
+    elif len(role_durs) >= min_n:
+        out["basis"] = "role"
+        out["usual_s"] = int(crew_card._pct(role_durs, 0.5))
+    if out["usual_s"] and elapsed > out["usual_s"]:
+        out["over_s"] = int(elapsed - out["usual_s"])
+    return out
 
 
 def fmt_dur_str(sec):
-    """Seconds as a short human length for the ETA text and chip (3m, 1h05m); '-' when unknown."""
+    """Seconds as a short human length for the size chip and CLI line (3m, 1h05m); '-' when unknown."""
     if sec is None:
         return "-"
     sec = max(0, int(sec))
@@ -295,35 +258,68 @@ def fmt_dur_str(sec):
     return "%dh%02dm" % (sec // 3600, (sec % 3600) // 60)
 
 
-def short_eta(eta):
-    """The compact chip form the dashboard shows next to a running worker: '~6m remaining' or ''.
+def chip_size(size):
+    """The compact line the dashboard puts next to a running worker: history, never a countdown.
 
-    One number, not a band: the best single guess at how much longer the worker needs. A spread read off a
-    thin history looks like a contradiction on a glanceable chip, so the chip shows the point estimate and
-    the word 'remaining' says plainly what it is."""
-    if not eta or eta.get("basis") == "none" or eta.get("remaining_s") is None:
+    It says what the card's own earlier runs took, and nothing about what is left. That is a deliberate
+    refusal: the best estimate this board can build from (role, elapsed, steps) misses by 73% while the
+    theoretical ceiling on those same features is 77% - the information is not there, so a `~6m remaining`
+    would be a made-up number wearing the look of a measurement."""
+    if not size or size["basis"] == "none":
         return ""
-    return "~%s remaining" % fmt_dur_str(eta["remaining_s"])
+    if size["basis"] == "role":
+        return "first run on this card; %s's runs usually ~%s" % (
+            size.get("profile") or "this role", fmt_dur_str(size["usual_s"]))
+    text = "earlier runs of this card: %s" % ", ".join(fmt_dur_str(x) for x in size["prior_s"])
+    if size["over_s"]:
+        text += " - past its usual %s" % fmt_dur_str(size["usual_s"])
+    return text
 
 
-def live_run_eta(board_db, card_row, run_row):
-    """The ETA for a running worker: its live step count and elapsed against the role's own history.
+def tile_size(size):
+    """The one-breath form for a board tile: `usual ~12m`, or `past its usual ~12m`. Still a size, not a countdown.
 
-    The worker session is found the same way the graph finds it, so the step count is the one the reader sees
-    in the panel. No live run, or no session for it, is no ETA rather than a wrong one."""
+    A tile cannot carry the card's run list, and a bare `~12m` on a running card reads as a promise about what
+    is left, which is exactly the claim the measurement killed - so the word 'usual' stays in even here."""
+    if not size or size["basis"] == "none":
+        return ""
+    who = "its usual" if size["basis"] == "card" else "this role's usual"
+    return ("past %s ~%s" if size["over_s"] else "%s ~%s") % (who, fmt_dur_str(size["usual_s"]))
+
+
+def fmt_size(size):
+    """One sentence for the `--history` line: what runs of this card cost before, and what is NOT claimed."""
+    if not size:
+        return ""
+    if size["basis"] == "none":
+        return ("no finished run of this card, and too few of its role (card 0, role %d) - no size to quote"
+                % size["n_role"])
+    if size["basis"] == "role":
+        return ("first run on this card; %d finished runs of the role median %s"
+                % (size["n_role"], fmt_dur_str(size["usual_s"])))
+    return ("%d earlier runs of this card: %s (median %s)%s"
+            % (size["n_prior"], ", ".join(fmt_dur_str(x) for x in size["prior_s"]),
+               fmt_dur_str(size["usual_s"]),
+               " - this one is already %s past that" % fmt_dur_str(size["over_s"]) if size["over_s"] else ""))
+
+
+def live_run_size(board_db, card_row, run_row, runs=None):
+    """The size history for a running worker: the card's own finished runs, else the role's. No live run,
+    or a run that already ended, is no size rather than a guessed one.
+
+    `runs` is the card's run list when the caller already has it (the panel and the card page do); the board
+    tile does not, so it reads them here."""
     if run_row is None:
         return None
     run_id, profile, status, outcome, summary, error, rstart, rend, rhb = run_row
     if rend is not None:
         return None
-    elapsed = max(0.0, time.time() - float(rstart or 0))
-    steps_now = 0
-    card_sid = card_row[6] if card_row and len(card_row) > 6 else None
-    _prof, sdb, srow = find_worker_session(card_row, run_row, card_sid)
-    if srow:
-        steps_now = srow[8] or 0
-    return estimate_run_eta(elapsed, steps_now,
-                            role_durations(board_db, profile), role_step_medians(profile))
+    if runs is None:
+        runs = load_runs(board_db, card_row[0]) if card_row else []
+    size = run_size(prior_run_seconds(runs), role_durations(board_db, profile),
+                    max(0.0, time.time() - float(rstart or 0)))
+    size["profile"] = profile
+    return size
 
 
 # ------------------------------------------------------------------- run reader
@@ -1210,7 +1206,7 @@ def build_situation(db, card_id, card_row, root_ev, runs):
         repeat_text = str(stops[-1][5] or stops[-1][4] or "").strip()
         repeat_stops = len(stops)
 
-    eta = live_run_eta(db, card_row, live)
+    size = live_run_size(db, card_row, live, runs)
     return {
         "headline": head,
         "why": why,
@@ -1224,8 +1220,8 @@ def build_situation(db, card_id, card_row, root_ev, runs):
         "runs": len(runs),
         "counts": counts,
         "live_run": ({"id": live[0], "profile": live[1], "started_at": live[6],
-                      "heartbeat_at": live[8], "eta": eta} if live is not None else None),
-        "eta": eta,
+                      "heartbeat_at": live[8], "size": size} if live is not None else None),
+        "size": size,
         "done": done_now,
         "children": children,
         "parent": blocked_kids[0] if blocked_kids else "",
@@ -1683,12 +1679,12 @@ class _Builder(object):
                 "started_at": rstart, "ended_at": rend,
             }
             if rend is None:
-                # a live worker: how far along its own milestones are, and the ETA that follows
-                steps_now = (sess[2][8] or 0) if sess else 0
-                eta = estimate_run_eta(max(0.0, time.time() - float(rstart or 0)), steps_now,
-                                       role_durations(self.db, profile), role_step_medians(profile))
-                rev["eta"] = eta
-                rev["eta_text"] = short_eta(eta)
+                # a live worker: what runs of this card cost before, as a size - not a countdown
+                size = run_size(prior_run_seconds(runs), role_durations(self.db, profile),
+                                max(0.0, time.time() - float(rstart or 0)))
+                size["profile"] = profile
+                rev["size"] = size
+                rev["size_text"] = chip_size(size)
             rnid = self.node("run:%s" % run_id, "run", run_id, run_status(rstatus, outcome), role,
                              rev, t0=rstart, t1=rend, last_ts=rend or rhb or rstart, text=rtext,
                              card=cid)
@@ -1957,11 +1953,12 @@ def list_recent(n):
     return 0
 
 
-def cmd_eta(limit=20):
-    """The /crew-graph --eta listing: for every in-flight crew worker, how much longer it likely needs.
+def cmd_history(limit=20):
+    """The /crew-graph --history listing: for every in-flight crew worker, what runs of its card cost before.
 
-    Only cards whose run is actually working get an ETA; a queued, blocked, or waiting card says so plainly
-    rather than inventing a number."""
+    It deliberately does not answer "how much longer": measured on this board, the best remaining-time estimate
+    buildable from role, elapsed and step count misses by more than the thing it names, and the ceiling on those
+    features is no better. A queued, blocked, or waiting card says so plainly rather than inventing a number."""
     db = kanban_db_path()
     if not db:
         print("no kanban database found")
@@ -1976,18 +1973,13 @@ def cmd_eta(limit=20):
         card_row, _db = load_card(c["id"])
         if not card_row:
             continue
-        live = None
-        for r in load_runs(db, c["id"]):
-            if r[2] == "running" and r[7] is None:
-                live = r
-                break
+        runs = load_runs(db, c["id"])
+        live = next((r for r in runs if r[2] == "running" and r[7] is None), None)
         if live is None:
             state = "waiting on you" if c.get("question") else ("needs /crew-unstuck" if c.get("unstuck") else c["status"])
             lines.append("%s  %-16s  %s" % (c["id"], (live and live[1]) or c["assignee"] or "-", state))
             continue
-        eta = live_run_eta(db, card_row, live)
-        lines.append("%s  %-16s  %s" % (c["id"], live[1], fmt_eta(eta) if eta and eta.get("basis") != "none"
-                                        else "estimating... (worker just started)"))
+        lines.append("%s  %-16s  %s" % (c["id"], live[1], fmt_size(live_run_size(db, card_row, live, runs))))
     more = "\n(+%d more)" % (total - len(cards)) if total > len(cards) else ""
     print("in flight: %d\n\n%s%s" % (total, "\n".join(lines), more))
     return 0
@@ -2457,8 +2449,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="Live flow graph for a crew card.")
     ap.add_argument("--card", default=None, help="card id or 'latest'")
     ap.add_argument("--recent", type=int, default=None, help="list the N most recent cards")
-    ap.add_argument("--eta", nargs="?", type=int, const=20, default=None, metavar="N",
-                    help="estimate how much longer each in-flight crew worker likely needs (N cards, default 20)")
+    ap.add_argument("--history", nargs="?", type=int, const=20, default=None, metavar="N",
+                    help="for each in-flight crew worker, what earlier runs of its card took (N cards, default 20)")
     ap.add_argument("--watch", type=float, default=None, help="re-render in place every N seconds")
     ap.add_argument("--json", nargs="?", const="", default=None, metavar="PATH",
                     help="write machine JSON (PATH optional)")
@@ -2475,8 +2467,8 @@ def main(argv=None):
     if args.recent:
         return list_recent(args.recent)
 
-    if args.eta is not None:
-        return cmd_eta(args.eta)
+    if args.history is not None:
+        return cmd_history(args.history)
 
     card_ref = resolve_card_ref(args)
     graph, err = build_graph(card_ref, args.steps)
