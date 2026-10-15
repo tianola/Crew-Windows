@@ -134,6 +134,14 @@ class Formatters(unittest.TestCase):
         self.assertNotIn("past", cg.chip_size(self.card))
         self.assertIn("past its usual 11m", cg.chip_size(self.over))
 
+    def test_one_earlier_run_is_called_one_run(self):
+        # A card whose history survives the filters as a single run is the common case, not the rare one:
+        # crashed and rate-limited deaths are not evidence of the card's size, so they drop out.
+        one = cg.run_size([700.0], [], 300)
+        self.assertEqual(one["n_prior"], 1)
+        self.assertEqual(cg.chip_size(one), "earlier run of this card: 11m")
+        self.assertEqual(cg.fmt_size(one), "1 earlier run of this card: 11m (median 11m)")
+
     def test_chip_says_it_is_a_first_run_for_the_role_basis(self):
         text = cg.chip_size(self.role)
         self.assertIn("first run on this card", text)

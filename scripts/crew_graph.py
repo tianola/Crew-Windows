@@ -273,7 +273,9 @@ def chip_size(size):
     if size["basis"] == "role":
         return "first run on this card; %s's runs usually ~%s" % (
             size.get("profile") or "this role", fmt_dur_str(size["usual_s"]))
-    text = "earlier runs of this card: %s" % ", ".join(fmt_dur_str(x) for x in size["prior_s"])
+    text = "%s of this card: %s" % (
+        "earlier run" if size["n_prior"] == 1 else "earlier runs",
+        ", ".join(fmt_dur_str(x) for x in size["prior_s"]))
     if size["over_s"]:
         text += " - past its usual %s" % fmt_dur_str(size["usual_s"])
     return text
@@ -300,8 +302,9 @@ def fmt_size(size):
     if size["basis"] == "role":
         return ("first run on this card; %d finished runs of the role median %s"
                 % (size["n_role"], fmt_dur_str(size["usual_s"])))
-    return ("%d earlier runs of this card: %s (median %s)%s"
-            % (size["n_prior"], ", ".join(fmt_dur_str(x) for x in size["prior_s"]),
+    return ("%d earlier %s of this card: %s (median %s)%s"
+            % (size["n_prior"], "run" if size["n_prior"] == 1 else "runs",
+               ", ".join(fmt_dur_str(x) for x in size["prior_s"]),
                fmt_dur_str(size["usual_s"]),
                " - this one is already %s past that" % fmt_dur_str(size["over_s"]) if size["over_s"] else ""))
 
