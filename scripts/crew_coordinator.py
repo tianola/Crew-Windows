@@ -350,7 +350,9 @@ def default_decider(ctx, facts_path):
     """(stdout, rc): the coordinator profile's one bounded turn, or CREW_COORDINATOR_DECIDER's stand-in."""
     stub = os.environ.get("CREW_COORDINATOR_DECIDER") or ""
     if stub:
-        cmd = shlex.split(stub) + [facts_path]
+        # POSIX shlex eats a Windows path's backslashes (C:\\Users -> C:Users); there, split the Windows way
+        parts = shlex.split(stub, posix=not crew_card.IS_WINDOWS)
+        cmd = [x[1:-1] if len(x) > 1 and x[0] == x[-1] == '"' else x for x in parts] + [facts_path]
     else:
         cmd = [crew_card.hermes_bin(), "-p", crew_card.role_profile("coordinator"), "chat",
                "--query-file", facts_path, "-Q", "--max-turns", "6", "--run-budget", "300",

@@ -34,12 +34,15 @@ import time
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+import crew_card  # noqa: E402 - Hermes's home for this platform
+import crew_proof_board  # noqa: E402
 ROW_ORDER = ["tokCeiling", "tokUsed", "tokRaw", "tokCalls", "tokPct"]
 ROW_WORDS = {"tokCeiling": "ceiling", "tokUsed": "used", "tokRaw": "raw", "tokCalls": "calls",
              "tokPct": "pct"}
 STATES = ["running", "review", "blocked", "done"]
-CHROME = (shutil.which("google-chrome") or shutil.which("chromium")
-          or shutil.which("chromium-browser"))
+CHROME = crew_proof_board.find_chrome()
 PORT = 9334
 
 
@@ -52,7 +55,7 @@ def crew_module():
 
 def ledger_totals(card_id):
     """(ceiling, used, raw, calls) over every ledger file recorded for this card."""
-    base = os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
+    base = crew_card.hermes_home()
     base = os.path.abspath(base)
     parent = os.path.dirname(base.rstrip(os.sep))
     if os.path.basename(parent) == "profiles":

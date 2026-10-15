@@ -23,14 +23,33 @@ import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROOFS_BOARD = "crew-proofs"
-AGENT = os.environ.get("HERMES_SRC") or os.path.expanduser("~/.hermes/hermes-agent")
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+import crew_card  # noqa: E402 - Hermes's home and source tree for this platform
+
+AGENT = os.environ.get("HERMES_SRC") or crew_card.hermes_root()
+
+
+def find_chrome():
+    """A Chrome/Chromium binary for the proofs that render a page: on PATH under the Linux names, else where a
+    Windows install puts chrome.exe or msedge.exe (neither is on PATH there). "" when there is none."""
+    for name in ("google-chrome", "chromium", "chromium-browser", "chrome", "msedge"):
+        found = shutil.which(name)
+        if found:
+            return found
+    if sys.platform == "win32":
+        roots = [os.environ.get(k) for k in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA")]
+        for root in filter(None, roots):
+            for rel in (("Google", "Chrome", "Application", "chrome.exe"),
+                        ("Microsoft", "Edge", "Application", "msedge.exe")):
+                path = os.path.join(root, *rel)
+                if os.path.isfile(path):
+                    return path
+    return ""
 
 
 def _hermes_python(root):
     """The python that imports hermes_cli (crew_card.hermes_python), or this one when none is found."""
-    if HERE not in sys.path:
-        sys.path.insert(0, HERE)
-    import crew_card
     return crew_card.hermes_python(root) or sys.executable
 
 
@@ -40,7 +59,7 @@ VENV_PY = os.environ.get("HERMES_PY") or _hermes_python(AGENT)
 def init_board(db_path, real_home=None):
     """Create the kernel schema at db_path. Returns True when the file exists afterwards."""
     env = dict(os.environ, PYTHONPATH=AGENT, HERMES_KANBAN_DB=db_path,
-               HERMES_HOME=real_home or os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes"))
+               HERMES_HOME=real_home or hermes_home())
     subprocess.run([VENV_PY, "-c", "from hermes_cli import kanban_db as kb; kb.init_db()"], env=env,
                    capture_output=True, text=True, timeout=180, cwd=AGENT, encoding="utf-8", errors="replace")
     return os.path.exists(db_path)
@@ -50,7 +69,7 @@ def claim_review(db_path, card_id, real_home=None):
     """Claim a card that is in `review` as the reviewer would (the kernel's claim_review_task: the dispatcher's
     own call, which the CLI's `claim` does not offer). Returns True when the card is running afterwards."""
     env = dict(os.environ, PYTHONPATH=AGENT, HERMES_KANBAN_DB=db_path,
-               HERMES_HOME=real_home or os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes"))
+               HERMES_HOME=real_home or hermes_home())
     code = ("from hermes_cli import kanban_db as kb, kanban_db_connect as kbc\n"
             "conn = kbc.connect()\n"
             "print(kb.claim_review_task(conn, %r, claimer='proof-reviewer') is not None)\n" % card_id)
@@ -61,8 +80,8 @@ def claim_review(db_path, card_id, real_home=None):
 # ---------------------------------------------------------------------------------------------- proofs board
 
 
-def _hermes_home():
-    return os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
+def hermes_home():
+    return crew_card.hermes_home()
 
 
 def kanban_root():
@@ -70,7 +89,7 @@ def kanban_root():
     override = os.environ.get("HERMES_KANBAN_HOME", "").strip()
     if override:
         return os.path.expanduser(override)
-    home = os.path.abspath(_hermes_home())
+    home = os.path.abspath(hermes_home())
     if os.path.basename(os.path.dirname(home)) == "profiles":
         return os.path.dirname(os.path.dirname(home))
     return home
@@ -128,7 +147,7 @@ def live_pin(pins=None):
     pins = pinned_dbs() if pins is None else pins
     if not pins:
         return "no kanban file is pinned (HERMES_KANBAN_DB / KANBAN_DB), so it would use the live board"
-    live = {default_db(), os.path.expanduser("~/.hermes/kanban.db")}
+    live = {default_db(), os.path.join(crew_card.default_home(), "kanban.db")}
     for pin in pins:
         if any(_same_file(pin, d) for d in live):
             return "the kanban file pinned is the live board (%s)" % pin

@@ -41,6 +41,17 @@ def check(name, ok, detail=""):
         FAILS.append(name)
 
 
+def profile_exists(name):
+    """The host's own predicate, asked in its own interpreter - the call the
+    dispatcher makes before it claims a ready card."""
+    code = ("import sys;sys.path.insert(0,%r);"
+            "from hermes_cli.profiles import profile_exists as pe;print(pe(%r))"
+            % (crew_proof_board.AGENT, name))
+    p = subprocess.run([crew_proof_board.VENV_PY, "-c", code], capture_output=True,
+                       text=True, timeout=180, encoding="utf-8", errors="replace")
+    return (p.stdout or "").strip() == "True"
+
+
 def seed():
     now = int(time.time())
     os.makedirs(WS, exist_ok=True)
@@ -54,13 +65,13 @@ def seed():
             conn.execute("delete from task_comments where task_id = ?", (cid,))
             conn.execute("delete from tasks where id = ?", (cid,))
         conn.execute("insert into tasks (id, title, body, status, assignee, priority, created_at, "
-                     "workspace_kind, workspace_path) values (?,?,?,?,?,0,?,?,?)",
+                     "created_by, workspace_kind, workspace_path) values (?,?,?,?,?,0,?,?,?,?)",
                      (FRESH, "PROBE handoff fresh", "Goal: nothing done yet\n", "ready",
-                      "crew-worker", now, "scratch", WS))
+                      crew_card.FIXTURE_ASSIGNEE, now, crew_card.PROBE_OWNER, "scratch", WS))
         conn.execute("insert into tasks (id, title, body, status, assignee, priority, created_at, "
-                     "workspace_kind, workspace_path) values (?,?,?,?,?,0,?,?,?)",
+                     "created_by, workspace_kind, workspace_path) values (?,?,?,?,?,0,?,?,?,?)",
                      (OLD, "PROBE handoff old", "Goal: continue the package work\n", "ready",
-                      "crew-worker", now - 3600, "scratch", WS))
+                      crew_card.FIXTURE_ASSIGNEE, now - 3600, crew_card.PROBE_OWNER, "scratch", WS))
         conn.execute("insert into task_runs (task_id, profile, status, started_at, ended_at, outcome, "
                      "summary) values (?,?,?,?,?,?,?)",
                      (OLD, "crew-worker", "blocked", now - 3000, now - 2900, "blocked",
@@ -111,6 +122,11 @@ def main():
     import crew_handoff
 
     seed()
+    # a fixture is never claimable: the dispatcher skips an assignee that is no
+    # Hermes profile (the same check crew_probe_skip_proof.py makes)
+    check("the dispatcher cannot claim a fixture card",
+          not profile_exists(crew_card.FIXTURE_ASSIGNEE), crew_card.FIXTURE_ASSIGNEE)
+
     fresh = crew_handoff.handoff_text(FRESH)
     check("a card on its first run gets no hand-off", fresh == "", repr(fresh[:40]))
 

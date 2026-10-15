@@ -33,7 +33,10 @@ CARD = "t_d93e0c7b"
 RUN = 3190
 WANT_ROWS, WANT_PICKS, WANT_WALLS = 7, 2, 5
 WANT_CALLS, WANT_FAILED = 205, 24
-CHROME = shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("chromium-browser")
+sys.path.insert(0, HERE)
+import crew_proof_board  # noqa: E402 - the shared Chrome finder
+
+CHROME = crew_proof_board.find_chrome()
 FAILURES = []
 CHECKS = 0
 

@@ -65,14 +65,21 @@ function drawHeader(d){
   var w=document.getElementById("when"); if(w) w.textContent="updated "+new Date().toLocaleTimeString();
 }
 
-// The state slot: live -> working · 4m (or no heartbeat), queued, or the verdict of a finished card.
+// The state slot: live -> working · 4m · step 23 · last: terminal · its usual ~11m (or no heartbeat),
+// queued, or the verdict of a finished card. The live facts are the run's own - how many tools it has
+// called and the one it is in - and the tail is this card's own earlier run lengths, so a tile says how
+// far along the work is and what the work has cost before, without guessing at a finish time.
 // Every state reads as a chip tinted in its own tone: working green, no heartbeat amber, queued blue,
 // verified green, verify failed red, unverified amber, done teal, blocked red.
 function chip(text, tone){ return '<span class="schip" style="--tone:var(--crew-tone-'+esc(tone)+')">'+esc(text)+'</span>'; }
 function stateHTML(t){
   if(t.active){
     if(t.active.quiet_s!==null && t.active.quiet_s>QUIET_S) return chip("no heartbeat", "review");
-    return chip("working · "+fmt(+t.active.for_s)+(t.active.size ? " · "+t.active.size : ""), "running");
+    var facts = "";
+    if(t.active.steps) facts += " · step " + (+t.active.steps||0);
+    if(t.active.last_tool) facts += " · last: " + t.active.last_tool;
+    if(t.active.size) facts += " · " + t.active.size;
+    return chip("working · "+fmt(+t.active.for_s)+facts, "running");
   }
   if(t.status==="ready"||t.status==="todo") return chip("queued", "ready");
   if(t.status==="blocked"||t.status==="triage") return chip(t.status==="triage" ? "needs you" : "blocked", "blocked");

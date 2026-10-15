@@ -78,7 +78,7 @@ def inner():
         plug.crew_open_hook(tool_name="kanban_create", args=merged, result=result, session_id=session)
         return verdict, json.loads(result)
 
-    want_assignee = "crew-worker" if os.path.isdir(os.path.expanduser("~/.hermes/profiles/crew-worker")) \
+    want_assignee = "crew-worker" if os.path.isdir(os.path.join(crew_card.default_home(), "profiles", "crew-worker")) \
         else os.path.basename(os.environ["HERMES_HOME"].rstrip("/"))
     args = {"title": "Status page", "assignee": "crew-worker", "body": BODY}
 

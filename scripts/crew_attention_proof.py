@@ -42,6 +42,7 @@ import urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
+import crew_card  # noqa: E402 - the fixture assignee and the probe marker
 import crew_proof_board  # noqa: E402
 URL = crew_proof_board.graph_base()
 KANBAN_DB = crew_proof_board.proof_db()
@@ -120,9 +121,9 @@ def seed():
     try:
         drop(conn)
         for cid, (title, status, event) in SEEDS.items():
-            conn.execute("insert into tasks (id, title, body, status, assignee, priority, created_at) "
-                         "values (?,?,?,?,?,0,?)",
-                         (cid, title, "Goal: seed for the bell proof\n", status, "crew-worker", now - 600))
+            conn.execute("insert into tasks (id, title, body, status, assignee, priority, created_by, created_at) "
+                         "values (?,?,?,?,?,0,?,?)",
+                         (cid, title, "Goal: seed for the bell proof\n", status, crew_card.FIXTURE_ASSIGNEE, crew_card.PROBE_OWNER, now - 600))
             conn.execute("insert into task_events (task_id, run_id, kind, payload, created_at) "
                          "values (?,?,?,?,?)", (cid, None, "created", "{}", now - 600))
             conn.execute("insert into task_events (task_id, run_id, kind, payload, created_at) "
@@ -273,8 +274,7 @@ def browser_leg():
     """The feature as the owner uses it: click the bell, the list opens, one row clears with its ✕,
     clear all empties the list. Skipped with a reason (never failed) when there is no browser here."""
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    chrome = (shutil.which("google-chrome") or shutil.which("chromium")
-              or shutil.which("chromium-browser"))
+    chrome = crew_proof_board.find_chrome()
     if not chrome:
         print("%-58s SKIP  no chrome/chromium on this box" % "the bell in a real browser")
         return True
@@ -294,7 +294,7 @@ def browser_leg():
         from crew_ws import WSClient
         ws = WSClient(target["webSocketDebuggerUrl"])
         try:
-            time.sleep(3.0)
+            ws.wait_for("!!document.getElementById('bell') && !!document.getElementById('belln')")
             before = ws.evaluate(READ_PANEL) or {}
             _rows, att = rows_now()
             start_total = att.get("total")
@@ -307,12 +307,12 @@ def browser_leg():
                   and before.get("clearall"), "drawn %s" % before.get("rows"))
 
             ws.evaluate("document.getElementById('bell').click()")
-            time.sleep(0.4)
-            check("clicking the bell opens the list", ws.evaluate(READ_HIDDEN) is False)
+            check("clicking the bell opens the list", ws.wait_for("%s === false" % READ_HIDDEN, timeout=5) is True)
             target_id = (before.get("ids") or [None])[0]
             if target_id:
                 ws.evaluate("document.querySelector('#noterows .ar button').click()")
-                time.sleep(1.2)
+                ws.wait_for("document.querySelectorAll('#noterows .ar').length < %d && document.getElementById('belln')"
+                            ".textContent === '%s'" % (before.get("rows") or 0, att.get("total") - 1), timeout=10)
                 after = ws.evaluate(READ_PANEL) or {}
                 check("a row's own clear takes it off the list",
                       after.get("rows") == (before.get("rows") or 0) - 1
@@ -327,7 +327,8 @@ def browser_leg():
                 check("a drawn row exists to clear", False, "no row in the list")
 
             ws.evaluate("document.getElementById('clearall').click()")
-            time.sleep(1.5)
+            ws.wait_for("document.querySelectorAll('#noterows .ar').length === 0 && "
+                        "document.getElementById('belln').textContent === '0'", timeout=10)
             empty = ws.evaluate(READ_PANEL) or {}
             check("clear all empties the drawn list",
                   empty.get("rows") == 0 and str(empty.get("badge")) == "0",

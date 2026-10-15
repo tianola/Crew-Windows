@@ -150,7 +150,26 @@ def hermes_bin():
         fallback = os.path.join(default_home(), "bin", "hermes.exe")
     else:
         fallback = os.path.expanduser("~/.local/bin/hermes")
-    return os.environ.get("HERMES_BIN") or shutil.which("hermes") or fallback
+    found = os.environ.get("HERMES_BIN") or shutil.which("hermes")
+    if IS_WINDOWS and not os.environ.get("HERMES_BIN") and (not found or is_batch_launcher(found)):
+        found = hermes_exe() or found
+    return found or fallback
+
+
+def is_batch_launcher(path):
+    """True for a .cmd/.bat launcher. cmd.exe ends an argument at its first newline, so a multi-line card body
+    passed through one arrives as its first line (measured 2026-10-14: Hermes Desktop's bin\\hermes.cmd)."""
+    return os.path.splitext(path or "")[1].lower() in (".cmd", ".bat")
+
+
+def hermes_exe():
+    """A real hermes.exe on Windows ("" when there is none): the installer's bin, then the venv beside Hermes's python."""
+    py = hermes_python()
+    for cand in (os.path.join(default_home(), "bin", "hermes.exe"),
+                 os.path.join(os.path.dirname(py), "hermes.exe") if py else ""):
+        if cand and os.path.isfile(cand):
+            return cand
+    return ""
 
 
 def config_value(key, section="crew", home=None):
@@ -2183,9 +2202,13 @@ def lift_block(card_id, profile=None, body=None):
             res = {"rc": 2, "out": str(exc)[:200]}
     elif row[2] in ("blocked", "scheduled"):
         cmd = [hermes_bin()] + (["-p", profile] if profile else []) + ["kanban", "unblock", card_id]
-        done = subprocess.run(cmd, capture_output=True, text=True, timeout=180, encoding="utf-8", errors="replace")
-        lines = (done.stdout + done.stderr).strip().splitlines()
-        res = {"rc": done.returncode, "out": lines[-1] if lines else ""}
+        try:
+            done = subprocess.run(cmd, capture_output=True, text=True, timeout=180, encoding="utf-8", errors="replace")
+        except OSError as exc:      # no runnable hermes (Windows raises where POSIX returns 127): a failed call,
+            res = {"rc": 127, "out": "hermes did not start: %s" % str(exc)[:160]}   # so callers take their fallback
+        else:
+            lines = (done.stdout + done.stderr).strip().splitlines()
+            res = {"rc": done.returncode, "out": lines[-1] if lines else ""}
     else:
         res = {"rc": 0, "out": "already %s" % row[2]}
     res["status"] = (card_row(card_id) or [None] * 3)[2]

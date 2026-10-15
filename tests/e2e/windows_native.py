@@ -29,7 +29,8 @@ round shows every break):
 Run:  python tests/e2e/windows_native.py --profile e2e [--only STEP]
 card-run settings (one place, the job env in tests.yml): CREW_E2E_PROVIDER, CREW_E2E_MODEL, CREW_E2E_BASE_URL,
 CREW_E2E_KEY_ENV (the env var name the provider reads its key from) and CREW_E2E_KEY (the key itself: env only,
-never printed, never written to a file or log).
+never printed, never written to a file or log). A box whose worker profile is already logged in (a subscription
+login, no key) sets CREW_E2E_PROFILE_AUTH=1 instead of CREW_E2E_KEY: the card runs on the profile's own credentials.
 The plugin copy under test is the one in the profile (what Hermes loads), not the checkout.
 """
 import argparse
@@ -118,9 +119,12 @@ def step_hermes_python(c):
     py = cc.hermes_python()
     check(bool(py) and os.path.isfile(py), "hermes_python() = %s" % py)
     if IS_WINDOWS:
-        check(norm(py) == norm(os.path.join(c.agent, "venv", "Scripts", "python.exe")), "it is venv\\Scripts\\python.exe")
-        check(norm(cc.venv_python(os.path.join(c.agent, "venv"))) == norm(py), "venv_python(venv) agrees")
-        sites = cc.venv_site_packages(os.path.join(c.agent, "venv"))
+        # install.ps1 puts the venv at <hermes-agent>\venv; Hermes Desktop's managed runtime keeps it under
+        # installs\<id>\environments\<hash>\venv. Either way it is <venv>\Scripts\python.exe.
+        check(os.path.normcase(py).endswith(os.path.normcase(os.path.join(os.sep + "venv", "Scripts", "python.exe"))), "it is <venv>\\Scripts\\python.exe")
+        venv = os.path.dirname(os.path.dirname(py))
+        check(norm(cc.venv_python(venv)) == norm(py), "venv_python(venv) agrees")
+        sites = cc.venv_site_packages(venv)
         check(any(s.lower().endswith(os.path.join("lib", "site-packages")) for s in sites), "venv_site_packages = %s" % sites)
     rc, out = run([py, "-c", "import hermes_cli, sys; print('hermes_cli', sys.version.split()[0])"])
     check(rc == 0 and "hermes_cli" in out, "that python imports hermes_cli (%s)" % out.strip())
@@ -332,24 +336,26 @@ def step_card_run(c):
     model = os.environ.get("CREW_E2E_MODEL", "")
     base_url = os.environ.get("CREW_E2E_BASE_URL", "")
     key_env = os.environ.get("CREW_E2E_KEY_ENV", "")
-    if not key:
+    own_auth = bool(os.environ.get("CREW_E2E_PROFILE_AUTH"))
+    if not key and not own_auth:
         say("    SKIPPED card-run: no model key in CREW_E2E_KEY (the repository secret is absent: forks and "
             "pull requests never get it). No card was run.")
         return
-    check(bool(provider and model and key_env), "card-run settings: provider=%s model=%s key env=%s base_url=%s" % (provider, model, key_env, base_url or "(provider default)"))
+    check(bool(provider and model and (key_env or own_auth)), "card-run settings: provider=%s model=%s key env=%s base_url=%s" % (provider, model, key_env or "(the profile's own login)", base_url or "(provider default)"))
     worker = c.card.role_profile("worker")
     check(worker != c.profile and c.card.profile_exists(worker), "the crew worker profile exists: %s" % worker)
     exe = c.card.hermes_bin()
-    env = dict(c.script_env(), **{key_env: key})
-    for k, v in (("model.provider", provider), ("model.default", model), ("model.base_url", base_url), ("model.key_env", key_env)):
+    env = dict(c.script_env(), **({key_env: key} if key else {}))
+    for k, v in (("model.provider", provider), ("model.default", model), ("model.base_url", base_url), ("model.key_env", key_env if key else "")):
         if not v:
             continue
         rc, out = run([exe, "-p", worker, "config", "set", k, v], env=env)
         check(rc == 0, "hermes -p %s config set %s (rc=%s)" % (worker, k, rc))
     # Hermes sends a graded reasoning_effort by default; Groq's gpt-oss accepts one but Hermes sends "default" to
     # api.groq.com, which it 400s. Marking the model as not reasoning leaves the field off the wire for every provider.
-    with open(os.path.join(c.home, "profiles", worker, "config.yaml"), "a", encoding="utf-8") as fh:
-        fh.write('\nmodel_overrides:\n  %s:\n    "%s":\n      supports_reasoning: false\n' % (provider, model))
+    if key:                      # CI's throwaway profile; a logged-in box's own profile is left as it is
+        with open(os.path.join(c.home, "profiles", worker, "config.yaml"), "a", encoding="utf-8") as fh:
+            fh.write('\nmodel_overrides:\n  %s:\n    "%s":\n      supports_reasoning: false\n' % (provider, model))
     # A dispatched worker gets its profile's .env, not this process's environment: the key goes there (a file in
     # the runner's throwaway profile, removed in the finally below), never on a command line.
     env_file = os.path.join(c.home, "profiles", worker, ".env")
@@ -357,9 +363,11 @@ def step_card_run(c):
     saved = open(env_file, encoding="utf-8").read() if had_env else ""
     land = tempfile.mkdtemp(prefix="crew-e2e-card-")
     posix = land.replace("\\", "/")
+    card = ""
     try:
-        with open(env_file, "w", encoding="utf-8") as fh:
-            fh.write(saved + ("\n" if saved and not saved.endswith("\n") else "") + "%s=%s\n" % (key_env, key))
+        if key:
+            with open(env_file, "w", encoding="utf-8") as fh:
+                fh.write(saved + ("\n" if saved and not saved.endswith("\n") else "") + "%s=%s\n" % (key_env, key))
         script = os.path.join(c.scripts, "crew_card.py")
         rc, out = run([sys.executable, script, "open", "--role", "worker", "--title", "crew e2e hello",
                        "--goal", "Create the file hello.txt in the landing folder whose only line is: crew-e2e-ok",
@@ -390,11 +398,15 @@ def step_card_run(c):
         check(os.path.isfile(os.path.join(land, "hello.txt")) and "crew-e2e-ok" in open(os.path.join(land, "hello.txt"), encoding="utf-8").read(),
               "the worker's artifact exists and says crew-e2e-ok")
     finally:
+        # Archive before the landing folder goes: the coordinator re-runs a done card's proof command, and with the
+        # folder removed that audit fails and opens a follow-up card nobody dispatches on a box without a gateway.
+        if card:
+            archive_card_tree(c, card, env)
         __import__("shutil").rmtree(land, ignore_errors=True)
-        if had_env:
+        if key and had_env:
             with open(env_file, "w", encoding="utf-8") as fh:
                 fh.write(saved)
-        else:
+        elif key:
             os.remove(env_file)
 
 
@@ -455,8 +467,40 @@ def main():
         except Exception:     # noqa: BLE001 - every step is reported, then the run fails
             failed.append(name)
             say("STEP %s FAILED\n%s" % (name, traceback.format_exc()))
+    if not args.only:
+        archive_e2e_card(c)
     say("RESULT: %s" % ("FAILED steps: " + ", ".join(failed) if failed else "all steps passed"))
     return 1 if failed else 0
+
+
+def archive_card_tree(c, card, env):
+    """Archive the card-run card and every card opened under it (audit follow-ups), so a run on a person's box
+    leaves nothing ready on their board."""
+    tree, frontier = [card], [card]
+    while frontier:
+        kids = [r[0] for cid in frontier
+                for r in c.card.q_db(c.card.kanban_db(), "select child_id from task_links where parent_id = ?", (cid,))
+                if r[0] and r[0] not in tree]
+        tree += kids
+        frontier = kids
+    for cid in tree:
+        rc, out = run([c.card.hermes_bin(), "kanban", "archive", cid], env=env, timeout=120)
+        say("    cleanup: archived card-run card %s (rc=%s)" % (cid, rc) if rc == 0 else
+            "    cleanup: could not archive card-run card %s (rc=%s): %s" % (cid, rc, out.strip()[-160:]))
+
+
+def archive_e2e_card(c):
+    """The board step's card sits `ready` with no assignee on the profile's real board: archive it, so a run on
+    a person's box leaves no card behind (CI's board is thrown away; a person's is not)."""
+    path = os.path.join(c.home, "e2e-card-id.txt")
+    card = c.card_id or (open(path, encoding="utf-8").read().strip() if os.path.isfile(path) else "")
+    if not card:
+        return
+    rc, out = run([c.card.hermes_bin(), "kanban", "archive", card], env=c.script_env(), timeout=120)
+    say("    cleanup: archived e2e card %s (rc=%s)" % (card, rc) if rc == 0 else
+        "    cleanup: could not archive e2e card %s (rc=%s): %s" % (card, rc, out.strip()[-160:]))
+    if os.path.isfile(path):
+        os.remove(path)
 
 
 if __name__ == "__main__":

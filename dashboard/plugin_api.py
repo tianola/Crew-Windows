@@ -539,8 +539,9 @@ def _health(crew, nonce):
     try:
         board = crew.board_data()
         body = "ok crew board cards=%s live=%s\n" % (board.get("cards"), board.get("live"))
-    except Exception as exc:
-        body = "ok crew board (no data: %s)\n" % exc
+    except Exception:
+        _log.exception("crew dashboard: health could not read the board")
+        body = "ok crew board (no data; see the Hermes server log)\n"
     return 200, body, "text/plain; charset=utf-8"
 
 

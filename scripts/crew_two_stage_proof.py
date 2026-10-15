@@ -79,7 +79,7 @@ def main():
     os.environ["CREW_ROUTER_PLUGIN"] = os.path.join(cp.TMP, "no-router")      # no router: the pick is empty
     cp.ENV["CREW_ROUTER_PLUGIN"] = os.environ["CREW_ROUTER_PLUGIN"]
     check("the scratch board is not the live board",
-          os.path.realpath(cp.DB) != os.path.realpath(os.path.expanduser("~/.hermes/kanban.db")), cp.DB)
+          os.path.realpath(cp.DB) != os.path.realpath(os.path.join(crew_card.default_home(), "kanban.db")), cp.DB)
     plug = load_plugin()
     cp.coordinator()                                   # initialise the cursor: nothing before this is replayed
     worker = crew_card.role_profile("worker")
@@ -87,7 +87,7 @@ def main():
 
     # ---- A: the snapshot is taken when the card opens
     target = os.path.join(cp.TMP, "artifact-a.txt")
-    proof_a = "test -f %s" % target
+    proof_a = "test -f %s" % target.replace("\\", "/")      # Git Bash runs it: a backslash would be an escape
     a = open_card("two-stage A", proof_a, "proof")
     check("A: the card opened with `Verify: proof`", crew_card.verify_mode(cp.card(a)["body"]) == "proof",
           crew_card.field(cp.card(a)["body"], "Verify"))
@@ -137,7 +137,7 @@ def main():
 
     # ---- D: a proof that fails after completion
     target_d = os.path.join(cp.TMP, "artifact-d.txt")
-    proof_d = "test -f %s" % target_d
+    proof_d = "test -f %s" % target_d.replace("\\", "/")      # Git Bash runs it: a backslash would be an escape
     d = open_card("two-stage D", proof_d, "proof")
     cp.cli("claim", d)
     open(target_d, "w", encoding="utf-8").write("x")
@@ -172,7 +172,7 @@ def main():
 
     # ---- F: independent verification
     target_f = os.path.join(cp.TMP, "artifact-f.txt")
-    proof_f = "test -f %s" % target_f
+    proof_f = "test -f %s" % target_f.replace("\\", "/")      # Git Bash runs it: a backslash would be an escape
     f = open_card("two-stage F", proof_f, "independent")
     cp.cli("set-model", f, "writer-pick", "--provider", "gemini")
     check("F: the card carries the writer's pin before the review",

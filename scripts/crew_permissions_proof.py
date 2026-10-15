@@ -132,15 +132,21 @@ def main():
         # 5: the record is world/group readable
         e = fixture(root, "mode", [("pre_tool_call", pair(os.path.join(root, "mode")))], mode=0o644)
         f = CI.permission_problems(e)
-        check("a consent record that is not 0600 is red",
-              any("mode 644" in x for x in f), f)
+        if CI.POSIX_MODES:
+            check("a consent record that is not 0600 is red",
+                  any("mode 644" in x for x in f), f)
+        else:       # Windows has no POSIX modes: install.py skips the check on purpose, so it must stay quiet
+            check("no POSIX mode check on this OS: a 644 record is not red", not any("mode" in x for x in f), f)
 
         # 6: the script is not executable
         g = fixture(root, "noexec", [("pre_tool_call", pair(os.path.join(root, "noexec")))],
                     executable=False)
         f = CI.permission_problems(g)
-        check("a hook script without its exec bit is red",
-              any("not executable" in x for x in f), f)
+        if CI.POSIX_MODES:
+            check("a hook script without its exec bit is red",
+                  any("not executable" in x for x in f), f)
+        else:
+            check("no exec bit on this OS: a script without one is not red", not any("not executable" in x for x in f), f)
 
         # 7: the script is gone
         h = fixture(root, "gone", [("pre_tool_call", pair(os.path.join(root, "gone")))], missing=True)

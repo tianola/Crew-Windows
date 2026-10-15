@@ -65,7 +65,7 @@ def main():
         # the heal runs the snapshot proof and lifts the block through the kernel's own unblock (a database
         # write); a `hermes` call, should one be made, fails here instead of reaching a real profile
         env = dict(os.environ, HERMES_HOME=home, HERMES_KANBAN_DB=db, CREW_WORKSPACE_ROOT=os.path.join(tmp, "ws"),
-                   HERMES_BIN="/bin/false", CREW_COORDINATOR_DECIDER="/bin/false")
+                   HERMES_BIN=sys.executable, CREW_COORDINATOR_DECIDER="%s -c exit(1)" % sys.executable)
         now = int(time.time())
         conn = sqlite3.connect(db)
         for cid, owner in ((PROBE, "probe"), (REAL, "crew-coordinator")):
@@ -104,7 +104,8 @@ def main():
 
         rep = pass_report()
         by_card = {c["card"]: c for c in rep.get("cards", [])}
-        check("a scheduled pass heals the person's card", status(REAL) != "blocked", status(REAL))
+        check("a scheduled pass heals the person's card", status(REAL) != "blocked",
+          "%s %s" % (status(REAL), json.dumps(by_card.get(REAL) or rep.get("raw") or rep)[:220]))
         check("the probe card stays blocked", status(PROBE) == "blocked", status(PROBE))
         check("the skipped probe card is named in the report",
               by_card.get(PROBE, {}).get("detail") == "probe fixture", str(by_card.get(PROBE))[:70])

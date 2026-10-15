@@ -34,6 +34,7 @@ import json
 import os
 import re
 import sqlite3
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -47,7 +48,7 @@ import crew_proof_board  # noqa: E402
 
 COORD = os.path.join(HERE, "crew_coordinator.py")
 FAILS = []
-REAL_HOME = os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
+REAL_HOME = crew_card.hermes_home()
 REAL_HERMES = crew_card.hermes_bin()
 TMP = tempfile.mkdtemp(prefix="crew-coordinator-proof-")
 SHIM = os.path.join(TMP, "shim")
@@ -55,7 +56,7 @@ DB = os.path.join(TMP, "kanban.db")
 HOME = os.path.join(TMP, "home")
 QUEUE = os.path.join(TMP, "queue.txt")
 CALLS = os.path.join(TMP, "calls.log")
-WRAP = os.path.join(TMP, "hermes_wrap.sh")
+WRAP = os.path.join(TMP, "hermes_wrap.exe" if crew_card.IS_WINDOWS else "hermes_wrap.sh")
 STUB = os.path.join(TMP, "stub_decider.py")
 ENV = dict(os.environ, PATH=SHIM + os.pathsep + os.environ.get("PATH", ""), HERMES_HOME=HOME, HERMES_KANBAN_DB=DB, HERMES_BIN=WRAP, CREW_PROFILE_PREFIX="crew-",
            CREW_COORDINATOR_DECIDER="%s %s" % (sys.executable, STUB), STUB_QUEUE=QUEUE, STUB_LOG=CALLS,
@@ -77,15 +78,48 @@ def write(path, text, mode=None):
         os.chmod(path, mode)
 
 
+def write_exe_wrapper(path):
+    """Windows: the wrapper as a real .exe - pip's console-script launcher stub (distlib's t64.exe) with a
+    `#!python` line and a zipped __main__ appended, the layout pip writes for every console script. It runs
+    this python on a script that sets HERMES_HOME and passes argv to the real hermes untouched."""
+    import io
+    import zipfile
+    places = [os.path.join(sys.base_prefix, "Lib", "site-packages", "pip", "_vendor", "distlib", "t64.exe")]
+    try:
+        import pip._vendor.distlib as distlib
+        places.insert(0, os.path.join(os.path.dirname(distlib.__file__), "t64.exe"))
+    except ImportError:         # a uv-made venv carries no pip; the base interpreter usually does
+        pass
+    found = next((x for x in places if os.path.isfile(x)), "")
+    if not found:
+        raise SystemExit("PROOF FAIL: no console-script launcher stub (pip's distlib t64.exe) to build the "
+                         "Windows hermes wrapper with; run the proof with a python that has pip")
+    with open(found, "rb") as fh:
+        stub = fh.read()
+    main = ("import os, subprocess, sys\nos.environ['HERMES_HOME'] = %r\n"
+            "sys.exit(subprocess.call([%r] + sys.argv[1:]))\n" % (REAL_HOME, REAL_HERMES))
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("__main__.py", main)
+    with open(path, "wb") as fh:
+        fh.write(stub + b"#!" + sys.executable.encode("utf-8") + b"\r\n" + buf.getvalue())
+
+
 def setup():
     os.makedirs(HOME)
     # the real `hermes kanban` verbs, pinned to the scratch board, under the real profile home (a scratch
     # HERMES_HOME would make the CLI bootstrap a whole runtime)
-    write(WRAP, "#!/bin/sh\nexport HERMES_HOME=%s\nexec %s \"$@\"\n" % (REAL_HOME, REAL_HERMES), 0o755)
+    if crew_card.IS_WINDOWS:        # a #!/bin/sh file is no Win32 program, and a .cmd cuts a multi-line body
+        write_exe_wrapper(WRAP)
+    else:
+        write(WRAP, "#!/bin/sh\nexport HERMES_HOME=%s\nexec %s \"$@\"\n" % (REAL_HOME, REAL_HERMES), 0o755)
     # a bare `hermes` anywhere in a subprocess must also reach the wrapper: hermes run under a scratch
     # HERMES_HOME bootstraps a runtime there and rewrites the live launcher (it did, once)
     os.makedirs(SHIM)
-    os.symlink(WRAP, os.path.join(SHIM, "hermes"))
+    if crew_card.IS_WINDOWS:        # a symlink needs a privilege a normal user lacks: a copy named hermes.exe
+        shutil.copy(WRAP, os.path.join(SHIM, "hermes.exe"))
+    else:
+        os.symlink(WRAP, os.path.join(SHIM, "hermes"))
     write(STUB, (
         "import os, sys\n"
         "q = os.environ['STUB_QUEUE']\n"
@@ -222,7 +256,7 @@ def cursor():
 def main():
     setup()
     check("the scratch board exists and is not the live board", os.path.exists(DB) and
-          os.path.realpath(DB) != os.path.realpath(os.path.expanduser("~/.hermes/kanban.db")), DB)
+          os.path.realpath(DB) != os.path.realpath(os.path.join(crew_card.default_home(), "kanban.db")), DB)
 
     # ---- A: first pass initialises the cursor
     first = cid_a = new_card("proof card A")

@@ -27,6 +27,7 @@ import urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
+import crew_card  # noqa: E402 - the fixture assignee and the probe marker
 import crew_proof_board  # noqa: E402
 KANBAN_DB = crew_proof_board.proof_db()
 BASE = crew_proof_board.graph_base()
@@ -69,9 +70,9 @@ def seed():
             BARE: "no goal line here at all\n",
         }
         for cid, body in bodies.items():
-            conn.execute("insert into tasks (id, title, body, status, assignee, priority, created_at) "
-                         "values (?,?,?,?,?,0,?)",
-                         (cid, "PROBE brief %s" % cid[-4:], body, "done", "crew-worker", now - 300))
+            conn.execute("insert into tasks (id, title, body, status, assignee, priority, created_by, created_at) "
+                         "values (?,?,?,?,?,0,?,?)",
+                         (cid, "PROBE brief %s" % cid[-4:], body, "done", crew_card.FIXTURE_ASSIGNEE, crew_card.PROBE_OWNER, now - 300))
             conn.execute("insert into task_runs (task_id, profile, status, started_at, ended_at, outcome) "
                          "values (?,?,?,?,?,?)",
                          (cid, "crew-worker", "done", now - 240, now - 60, "completed"))

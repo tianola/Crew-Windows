@@ -38,12 +38,12 @@ PROFILE = os.path.dirname(os.path.abspath(__file__))
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
+import crew_card  # noqa: E402 - the fixture assignee and the probe marker
 import crew_proof_board  # noqa: E402
 KANBAN_DB = crew_proof_board.proof_db()
 BASE = crew_proof_board.graph_base()
 PORT = int(os.environ.get("CREW_PROOF_CDP_PORT", "9414"))
-CHROME = (shutil.which("google-chrome") or shutil.which("chromium")
-          or shutil.which("chromium-browser"))
+CHROME = crew_proof_board.find_chrome()
 PROFILE_DIR = os.path.join(tempfile.gettempdir(), "crew-term-window-chrome")
 PROBE = "t" + "9a" + "w1nd0w"
 FAILS = []
@@ -65,9 +65,9 @@ def seed_probe():
         body = ("Goal: probe the card page's terminal window.\n"
                 "Proof command: python3 crew_terminal_window_proof.py\n"
                 "Done when: the window holds six lines.\n")
-        conn.execute("insert into tasks (id, title, body, status, assignee, priority, created_at) "
-                     "values (?,?,?,'done','crew-worker',0,?)",
-                     (PROBE, "PROBE terminal window", body, now - 300))
+        conn.execute("insert into tasks (id, title, body, status, assignee, priority, created_by, created_at) "
+                     "values (?,?,?,'done',?,0,?,?)",
+                     (PROBE, "PROBE terminal window", body, crew_card.FIXTURE_ASSIGNEE, crew_card.PROBE_OWNER, now - 300))
         # The run is LIVE on purpose: a session with ended_at NULL on a settled run is the killed-worker
         # case, and the page now (correctly) draws that as done. A fixture that wants a live node has to
         # say so in the run row too - the run is what decides a node's state.
@@ -88,7 +88,7 @@ SESS_ID = "probe" + "_termwindow_session"
 
 def session_db():
     for prof in ("crew-worker", "crew-verifier", "crew-coordinator"):
-        path = os.path.join(os.path.expanduser("~"), ".hermes", "profiles", prof, "state.db")
+        path = os.path.join(crew_card.base_home(), "profiles", prof, "state.db")
         if os.path.exists(path):
             return prof, path
     return None, None
@@ -297,7 +297,7 @@ def main():
             return 1
         from crew_ws import WSClient
         ws = WSClient(target["webSocketDebuggerUrl"])
-        time.sleep(3.0)
+        ws.wait_for("typeof MAX_STEP_LINES === 'number' && typeof tickChips === 'function'")
         out = ws.evaluate(LOOK) or {}
         check("the page exposes the window and its helpers", out.get("cap") == 6
               and out.get("hasDrop") and out.get("hasTick"), "cap=%s" % out.get("cap"))

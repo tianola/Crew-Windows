@@ -18,6 +18,7 @@ import importlib.util
 import json
 import os
 import sqlite3
+import subprocess
 import sys
 import time
 
@@ -43,6 +44,17 @@ def check(name, ok, detail=""):
         FAILS.append(name)
 
 
+def profile_exists(name):
+    """The host's own predicate, asked in its own interpreter - the call the
+    dispatcher makes before it claims a ready card."""
+    code = ("import sys;sys.path.insert(0,%r);"
+            "from hermes_cli.profiles import profile_exists as pe;print(pe(%r))"
+            % (crew_proof_board.AGENT, name))
+    p = subprocess.run([crew_proof_board.VENV_PY, "-c", code], capture_output=True,
+                       text=True, timeout=180, encoding="utf-8", errors="replace")
+    return (p.stdout or "").strip() == "True"
+
+
 def seed():
     now = int(time.time())
     conn = sqlite3.connect(KANBAN_DB)
@@ -56,9 +68,10 @@ def seed():
                            (GRAND, "PROBE origin grandchild"), (SOLO, "PROBE origin solo"),
                            (HELD, "PROBE origin held")):
             conn.execute("insert into tasks (id, title, body, status, assignee, priority, created_at, "
-                         "workspace_kind, workspace_path) values (?,?,?,?,?,0,?,?,?)",
-                         (cid, title, "Goal: probe\n", "ready", "crew-worker", now,
-                          "scratch", os.path.join(crew_card.base_home(), "kanban", "workspaces", cid)))
+                         "created_by, workspace_kind, workspace_path) values (?,?,?,?,?,0,?,?,?,?)",
+                         (cid, title, "Goal: probe\n", "ready", crew_card.FIXTURE_ASSIGNEE, now,
+                          crew_card.PROBE_OWNER, "scratch",
+                          os.path.join(crew_card.base_home(), "kanban", "workspaces", cid)))
         # the chat's card carries the origin; the decomposer's children carry only their lineage
         conn.execute("insert into task_events (task_id, run_id, kind, payload, created_at) "
                      "values (?,?,?,?,?)",
@@ -101,6 +114,11 @@ def main():
     import crew_card
 
     seed()
+    # a fixture is never claimable: the dispatcher skips an assignee that is no
+    # Hermes profile (the same check crew_probe_skip_proof.py makes)
+    check("the dispatcher cannot claim a fixture card",
+          not profile_exists(crew_card.FIXTURE_ASSIGNEE), crew_card.FIXTURE_ASSIGNEE)
+
     own, src, hops = crew_card.origin_of(ROOT)
     check("a card's own origin record is used", own.get("origin") == ORIGIN and hops == 0,
           "origin=%s hops=%s" % (own.get("origin"), hops))

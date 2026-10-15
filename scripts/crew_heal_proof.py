@@ -55,7 +55,7 @@ def main():
             print("PROOF FAIL: the scratch board could not be created")
             return 1
         env = dict(os.environ, HERMES_HOME=home, HERMES_KANBAN_DB=db, CREW_WORKSPACE_ROOT=os.path.join(tmp, "ws"),
-                   HERMES_BIN="/bin/false", CREW_COORDINATOR_DECIDER="/bin/false",
+                   HERMES_BIN=sys.executable, CREW_COORDINATOR_DECIDER="%s -c exit(1)" % sys.executable,
                    CREW_ROUTER_PLUGIN=os.path.join(tmp, "no-router"))      # an explicit path that holds nothing
         now = int(time.time())
         conn = sqlite3.connect(db)
@@ -93,11 +93,10 @@ def main():
         def guard(cid):
             """The kernel's own respawn guard for this card, asked in its own interpreter."""
             code = ("import sys,sqlite3;sys.path.insert(0,%r);import hermes_cli.kanban_db_dispatch as kbd;"
-                    "c=sqlite3.connect('file:%s?mode=ro',uri=True);c.row_factory=sqlite3.Row;"
-                    "print(kbd.check_respawn_guard(c,%r))" % (crew_proof_board.AGENT, db, cid))
+                    "c=sqlite3.connect(%r,uri=True);c.row_factory=sqlite3.Row;"
+                    "print(kbd.check_respawn_guard(c,%r))" % (crew_proof_board.AGENT, "file:%s?mode=ro" % db, cid))
             p = subprocess.run([crew_proof_board.VENV_PY, "-c", code], capture_output=True, text=True, timeout=180,
-                               env=dict(os.environ, HERMES_HOME=os.environ.get("HERMES_HOME")
-                                        or os.path.expanduser("~/.hermes")), encoding="utf-8", errors="replace")
+                               env=dict(os.environ, HERMES_HOME=crew_proof_board.hermes_home()), encoding="utf-8", errors="replace")
             return (p.stdout or "").strip().splitlines()[-1:] and (p.stdout or "").strip().splitlines()[-1]
 
         def coordinator(*args):

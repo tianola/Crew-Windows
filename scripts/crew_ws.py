@@ -7,6 +7,7 @@ import base64
 import json
 import os
 import socket
+import time
 import struct
 import urllib.parse
 
@@ -103,6 +104,21 @@ class WSClient:
         if "exceptionDetails" in out:
             raise WSError(out["exceptionDetails"].get("text", "javascript error"))
         return out.get("result", {}).get("value")
+
+    def wait_for(self, expression, timeout=20.0, step=0.25):
+        """Evaluate until the expression is truthy and return its value; None when the timeout runs out. A page still
+        loading throws (an element not there yet), which counts as not yet: a fixed sleep raced a slow box."""
+        deadline = time.time() + timeout
+        while True:
+            try:
+                value = self.evaluate(expression)
+                if value:
+                    return value
+            except WSError:
+                pass
+            if time.time() >= deadline:
+                return None
+            time.sleep(step)
 
     def close(self):
         try:

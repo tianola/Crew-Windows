@@ -90,7 +90,12 @@ COMMANDS = [
 
 
 def _hermes_bin():
-    return os.environ.get("HERMES_BIN") or _which_hermes() or "hermes"
+    found = os.environ.get("HERMES_BIN") or _which_hermes()
+    if sys.platform == "win32" and not os.environ.get("HERMES_BIN"):
+        card = _card_tool()     # a .cmd launcher cuts a multi-line argument at its first newline
+        if card is not None and (not found or card.is_batch_launcher(found)):
+            found = card.hermes_exe() or found
+    return found or "hermes"
 
 
 def _which_hermes():

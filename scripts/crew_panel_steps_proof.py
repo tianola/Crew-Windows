@@ -38,11 +38,13 @@ import time
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+import crew_proof_board  # noqa: E402
 URL = (os.environ.get("CREW_GRAPH_URL") or os.environ.get("CREW_GRAPH_BASE")
        or "http://127.0.0.1:8799").rstrip("/")
 PORT = int(os.environ.get("CREW_GRAPH_CDP_PORT", "9347"))
-CHROME = (shutil.which("google-chrome") or shutil.which("chromium")
-          or shutil.which("chromium-browser"))
+CHROME = crew_proof_board.find_chrome()
 FAILURES = []
 CHECKS = 0
 

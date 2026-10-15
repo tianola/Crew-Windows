@@ -16,7 +16,12 @@ import tempfile
 import time
 import urllib.request
 
-CHROME = shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("chromium-browser")
+HERE = os.path.dirname(os.path.abspath(__file__))
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+import crew_proof_board  # noqa: E402
+
+CHROME = crew_proof_board.find_chrome()
 PORT = 9333
 
 

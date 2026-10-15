@@ -29,6 +29,7 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
+import crew_card  # noqa: E402 - the fixture assignee and the probe marker
 import crew_proof_board  # noqa: E402
 KANBAN_DB = crew_proof_board.proof_db()
 VENV_PY = os.environ.get("CREW_PY") or crew_proof_board._hermes_python(crew_proof_board.AGENT)
@@ -64,7 +65,7 @@ def dispatcher_argv(model=None, provider=None, route=None):
     """
     code = (
         "import sys, dataclasses, json\n"
-        "sys.path.insert(0, %r)\n" % os.path.expanduser("~/.hermes/hermes-agent") + 
+        "sys.path.insert(0, %r)\n" % crew_proof_board.AGENT + 
         ""
         "from hermes_cli import kanban_db as kdb, kanban_db_dispatch as kd, plugins\n"
         "if %r == 'none':\n"
@@ -83,15 +84,25 @@ def dispatcher_argv(model=None, provider=None, route=None):
     return json.loads(r.stdout.strip().splitlines()[-1]), ""
 
 
+def route_seam():
+    """True when this Hermes dispatcher asks plugins for a worker route (resolve_kanban_worker_route, the
+    free_first_router local patch); upstream Hermes has no such hook."""
+    try:
+        with open(os.path.join(crew_proof_board.AGENT, "hermes_cli", "kanban_db_dispatch.py"), encoding="utf-8") as fh:
+            return "resolve_kanban_worker_route" in fh.read()
+    except OSError:
+        return False
+
+
 def seed():
     conn = sqlite3.connect(KANBAN_DB)
     try:
         conn.execute("delete from task_runs where task_id = ?", (PROBE,))
         conn.execute("delete from task_events where task_id = ?", (PROBE,))
         conn.execute("delete from tasks where id = ?", (PROBE,))
-        conn.execute("insert into tasks (id, title, body, status, assignee, priority, created_at) "
-                     "values (?,?,?,?,?,0,?)",
-                     (PROBE, "PROBE route pin", "Goal: probe\n", "done", "crew-worker",
+        conn.execute("insert into tasks (id, title, body, status, assignee, priority, created_by, created_at) "
+                     "values (?,?,?,?,?,0,?,?)",
+                     (PROBE, "PROBE route pin", "Goal: probe\n", "done", crew_card.FIXTURE_ASSIGNEE, crew_card.PROBE_OWNER,
                       int(time.time())))
         conn.execute("insert into task_runs (task_id, profile, status, started_at, ended_at, "
                      "outcome) values (?,?,?,?,?,?)",
@@ -169,20 +180,32 @@ def main():
     check("with nothing routed, an unpinned card spawns with no model override",
           bool(plain) and "m-x" not in plain and "--provider" not in plain,
           (plain or err2)[-60:] if plain else err2)
-    routed, err3 = dispatcher_argv("m-x", "p-y", route="model")
-    check("a routed card spawns on the route, not on its stale pin",
-          bool(routed) and "m-x" not in routed
-          and routed[routed.index("m-routed"):routed.index("m-routed") + 2] == ["m-routed", "--provider"]
-          and routed[routed.index("m-routed") + 2] == "p-routed",
-          (routed or err3)[-70:] if routed else err3)
+    if route_seam():
+        routed, err3 = dispatcher_argv("m-x", "p-y", route="model")
+        check("a routed card spawns on the route, not on its stale pin",
+              bool(routed) and "m-x" not in routed and "m-routed" in routed
+              and routed[routed.index("m-routed"):routed.index("m-routed") + 2] == ["m-routed", "--provider"]
+              and routed[routed.index("m-routed") + 2] == "p-routed",
+              (routed or err3)[-70:] if routed else err3)
+    else:   # the routing hook is the free_first_router local patch, not upstream Hermes
+        print("note: this Hermes dispatcher has no resolve_kanban_worker_route hook (a local patch), so a "
+              "route cannot win over the pin here; the pin checks above are what applies")
 
     # 5. a real router pick, from the delegate menu, naming a provider a profile can resolve
     # The pick comes from the agent-floor menu (free_first_router's agent_floor.py). When every floor model
     # is in a daily cap the router's answer is "parent" - no pick, nothing pinned - which is the right answer
     # and not a failure; the pin mechanics below then run on a fixed floor-model pick.
-    answer = crew_card.route_answer("code", "commit and push the crew package")
-    pick = crew_card.pick_from_answer(answer, "code", "commit and push the crew package")
-    if pick is None:
+    if not (crew_card.router_path() or crew_card.router_plugin_path()):
+        print("note: no model router on this box (worker_route.py / free_first_router): no pick to check; "
+              "the pin mechanics below run on a fixed pick")
+        answer = None
+    else:
+        answer = crew_card.route_answer("code", "commit and push the crew package")
+    pick = crew_card.pick_from_answer(answer, "code", "commit and push the crew package") if answer is not None else None
+    if pick is None and answer is None:
+        pick = {"provider": "gemini", "model": "gemini-3-flash-preview", "task_class": "code",
+                "why": "fixed pick: no router on this box", "floor": None, "menu_size": 0}
+    elif pick is None:
         check("no pick only when the floor holds nothing live (router answered parent, menu_size 0)",
               bool(answer) and answer.get("label") == "parent" and answer.get("menu_size") == 0, answer)
         pick = {"provider": "gemini", "model": "gemini-3-flash-preview", "task_class": "code",
@@ -193,9 +216,10 @@ def main():
         check("the router returns a real delegate-fit pick (provider + model) that clears the floor",
               bool(pick.get("provider")) and bool(pick.get("model")) and bool((pick.get("floor") or {}).get("min_context")),
               "%s / %s floor=%s" % (pick.get("provider"), pick.get("model"), pick.get("floor")))
-    check("the pick names a Hermes provider the worker profile resolves",
-          pick.get("provider") in worker_providers(),
-          "provider=%s (router host=%s)" % (pick.get("provider"), pick.get("router_provider")))
+    if answer is not None:
+        check("the pick names a Hermes provider the worker profile resolves",
+              pick.get("provider") in worker_providers(),
+              "provider=%s (router host=%s)" % (pick.get("provider"), pick.get("router_provider")))
 
     # 6. the pick lands on the card
     seed()

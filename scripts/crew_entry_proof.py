@@ -41,7 +41,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import crew_card  # noqa: E402 - the owner profile, the base home and the package checkout
 PKG = crew_card.package_dir() or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROFILE = os.environ.get("CREW_PROFILE") or crew_card.owner_home()
-HERMES_SRC = os.environ.get("HERMES_SRC") or os.path.expanduser("~/.hermes/hermes-agent")
+HERMES_SRC = os.environ.get("HERMES_SRC") or crew_card.hermes_root()
 CARD_TOOL = os.path.join(PROFILE, "plugins", "crew", "scripts", "crew_card.py")
 RULE_SENTENCE = "Crew starts only on /crew"
 FAILURES = []

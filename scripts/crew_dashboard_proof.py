@@ -36,6 +36,7 @@ import urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
+import crew_card  # noqa: E402 - the fixture assignee and the probe marker
 import crew_proof_board  # noqa: E402
 URL = crew_proof_board.graph_base()
 TEST_RE = re.compile(r"\btests?\b|probe|dry-run proof", re.I)
@@ -117,9 +118,9 @@ def test_cards_out_of_the_numbers():
     conn = sqlite3.connect(KANBAN_DB)
     try:
         conn.execute("delete from tasks where id = ?", (probe,))
-        conn.execute("insert into tasks (id, title, body, status, assignee, priority, created_at) "
-                     "values (?,?,?,?,?,0,?)", (probe, "PROBE board count probe", "Goal: x\n",
-                                                "ready", "crew-worker", int(time.time())))
+        conn.execute("insert into tasks (id, title, body, status, assignee, priority, created_by, created_at) "
+                     "values (?,?,?,?,?,0,?,?)", (probe, "PROBE board count probe", "Goal: x\n",
+                                                  "ready", crew_card.FIXTURE_ASSIGNEE, crew_card.PROBE_OWNER, int(time.time())))
         conn.commit()
     finally:
         conn.close()

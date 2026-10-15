@@ -826,7 +826,7 @@ def render_graph_unit(profile_home, port=GRAPH_PORT):
     ) % (python3_bin(), script, port, publish)
 
 
-def step_graph_unit(profile_home, apply, no_service, port=GRAPH_PORT):
+def step_graph_unit(profile_home, apply, no_service, port=GRAPH_PORT, code_changed=False):
     if sys.platform == "win32":
         # There is no systemd --user on native Windows: writing a unit file would only leave a dead file
         # and the enable/restart would silently no-op. Skip it and say how to get the dashboard up instead.
@@ -840,7 +840,15 @@ def step_graph_unit(profile_home, apply, no_service, port=GRAPH_PORT):
         act = subprocess.run(["systemctl", "--user", "is-active", UNIT_GRAPH_NAME],
                              capture_output=True, text=True, encoding="utf-8", errors="replace").stdout.strip()
         if act == "active":
-            return "OK", "graph http unit up to date (active on 127.0.0.1:%d)" % port
+            if not code_changed:
+                return "OK", "graph http unit up to date (active on 127.0.0.1:%d)" % port
+            # the server loaded its code when it started: an upgrade that replaced the plugin files leaves it
+            # answering from the old code (and a new asset served by an old renderer breaks the card page)
+            if not apply:
+                return "CHANGED", "graph http daemon -> restart (the plugin code changed)"
+            subprocess.run(["systemctl", "--user", "restart", UNIT_GRAPH_NAME],
+                           capture_output=True, text=True, encoding="utf-8", errors="replace")
+            return "CHANGED", "graph http daemon restarted (the plugin code changed)"
         if not apply:
             return "CHANGED", "graph http unit -> start %s" % UNIT_GRAPH_NAME
         subprocess.run(["systemctl", "--user", "enable", "--now", UNIT_GRAPH_NAME],
@@ -1383,8 +1391,15 @@ def step_profiles(source_profile, prefix, apply, no_profiles=False):
 
 
 def _steps(profile_home, profile, args):
+    changed = {"plugin": False}
+
+    def plugin_step(a):
+        status, detail = step_plugin(profile_home, a)
+        changed["plugin"] = changed["plugin"] or status == "CHANGED"
+        return status, detail
+
     return [
-        ("plugin", lambda a: step_plugin(profile_home, a)),
+        ("plugin", plugin_step),
         ("skills", lambda a: step_skills(profile_home, a)),
         ("scripts", lambda a: step_scripts(profile_home, a)),
         ("roles", lambda a: step_roles(profile_home, a)),
@@ -1399,7 +1414,8 @@ def _steps(profile_home, profile, args):
         ("other-copies", lambda a: step_other_copies(profile_home, args.profile_prefix, a)),
         ("prompt-budget", lambda a: step_prompt_budget(args.profile_prefix, a)),
         ("permissions", lambda a: step_permissions(profile_home, profile, args.profile_prefix, a)),
-        ("graph-http", lambda a: step_graph_unit(profile_home, a, args.no_service, args.graph_port)),
+        ("graph-http", lambda a: step_graph_unit(profile_home, a, args.no_service, args.graph_port,
+                                                  changed["plugin"])),
         ("proofs-board", lambda a: step_proofs_board(a, args.nightly_proofs and not args.no_cron)),
         ("proofs-cron", lambda a: step_proofs_cron(profile, profile_home, a, args.no_cron, args.nightly_proofs,
                                                    args.proofs_deliver)),

@@ -42,7 +42,7 @@ import crew_card  # noqa: E402 - the owner profile and the base home
 URL = crew_proof_board.graph_base()
 KANBAN_DB = crew_proof_board.proof_db()
 PORT = 9338
-CHROME = (shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("chromium-browser"))
+CHROME = crew_proof_board.find_chrome()
 FAILURES = []
 MIN_SHARE = 0.95
 STOPS = 8
@@ -86,12 +86,12 @@ def seed_probe(suffix, stops, reason=None):
             # block_kind matters: the kernel re-classifies a blocked card with no kind and the
             # dispatcher then spawns a real worker on this probe
             "insert into tasks (id, title, body, assignee, status, priority, created_by, created_at, "
-            "workspace_kind, block_kind) values (?, ?, ?, 'crew-worker', 'blocked', 0, 'probe', ?, "
+            "workspace_kind, block_kind) values (?, ?, ?, ?, 'blocked', 0, ?, ?, "
             "'scratch', 'needs_input')",
             (card, "PROBE spinbox %s" % suffix,
              "Coordinator: %s/\nGoal: probe card, the spin box proof seeds it\n"
              "Role: worker\nProof-cmd: true\n" % (os.environ.get("CREW_ROLE") or crew_card.owner_profile()),
-             now))
+             crew_card.FIXTURE_ASSIGNEE, crew_card.PROBE_OWNER, now))
         for i in range(max(1, stops)):
             conn.execute(
                 "insert into task_runs (task_id, profile, status, started_at, ended_at, outcome, "

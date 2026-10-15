@@ -21,6 +21,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
+import crew_card  # noqa: E402 - Hermes's default home
 import crew_coordinator_proof as cp  # noqa: E402
 
 CARD = os.path.join(HERE, "crew_card.py")
@@ -33,7 +34,7 @@ check = cp.check
 def main():
     cp.setup()
     check("the scratch board is not the live board",
-          os.path.realpath(cp.DB) != os.path.realpath(os.path.expanduser("~/.hermes/kanban.db")), cp.DB)
+          os.path.realpath(cp.DB) != os.path.realpath(os.path.join(crew_card.default_home(), "kanban.db")), cp.DB)
     env = dict(cp.ENV, HERMES_SESSION_PLATFORM="zulip", HERMES_SESSION_CHAT_ID=CHAT,
                HERMES_SESSION_CHAT_TYPE="stream", HERMES_SESSION_ID="walk_origin_open")
     opened = subprocess.run(

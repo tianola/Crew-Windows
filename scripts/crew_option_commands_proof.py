@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import crew_card  # noqa: E402 - the owner profile, the base home and the package checkout
 PKG = crew_card.package_dir() or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROFILE = os.environ.get("CREW_PROFILE") or crew_card.owner_home()
-HERMES_SRC = os.environ.get("HERMES_SRC") or os.path.expanduser("~/.hermes/hermes-agent")
+HERMES_SRC = os.environ.get("HERMES_SRC") or crew_card.hermes_root()
 HERMES_PY = os.environ.get("HERMES_PY") or crew_card.hermes_python(HERMES_SRC) or sys.executable
 PLUGIN = os.path.join(PROFILE, "plugins", "crew", "__init__.py")
 # The plugin resolves its scripts from HERMES_HOME at import, and the gateway always runs a profile with it

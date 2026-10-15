@@ -194,6 +194,11 @@ def board_data(include_all=False, older=False):
         if live:
             beat = live[0][6] or live[0][4]
             for_s = int(now - (live[0][4] or now))
+            active = {"profile": profile, "run": live[0][0], "for_s": for_s,
+                      "quiet_s": int(now - (beat or now)) if beat else None}
+            # what this run has verifiably done, read off its own session: the step count and the tool it is
+            # in. Facts only - the tile says nothing about how long is left (issue #9 option 1).
+            active.update(CG.live_run_facts(db, tid, live[0][0], live[0][2]))
             # what runs of this card cost before, else what the role's cost: a size from history, never a
             # countdown. The tile does its own run scan because its loader's columns differ from load_runs'.
             prior = [d for d in (CG.run_length_seconds(r[4], r[5], r[3], r[7])
@@ -202,9 +207,7 @@ def board_data(include_all=False, older=False):
                 dur_cache[profile] = CG.role_durations(db, profile)
             size = CG.run_size(prior, dur_cache[profile], for_s)
             size["profile"] = profile
-            active = {"profile": profile, "run": live[0][0], "for_s": for_s,
-                      "quiet_s": int(now - (beat or now)) if beat else None,
-                      "size": CG.tile_size(size)}
+            active["size"] = CG.tile_size(size)
         else:
             active = None
         ended = completed or (my_runs[-1][5] if my_runs and my_runs[-1][5] else None)
@@ -707,7 +710,8 @@ class Handler(BaseHTTPRequestHandler):
                 board = board_data()
                 body = "ok crew board cards=%s live=%s\n" % (board.get("cards"), board.get("live"))
             except Exception as exc:
-                body = "ok crew board (no data: %s)\n" % exc
+                sys.stderr.write("crew health: board data failed: %r\n" % (exc,))
+                body = "ok crew board (no data; the reason is in the crew log)\n"
             return self._send(200, body, "text/plain; charset=utf-8")
         show_all = "all=1" in (urlparse(self.path).query or "")
         nonce = secrets.token_urlsafe(16)

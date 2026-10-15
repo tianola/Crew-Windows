@@ -554,6 +554,55 @@ def find_worker_session(card_row, run_row, card_session_id):
     return None, None, None
 
 
+def last_tool_of(db, session_id):
+    """The tool a session called last, or None: the newest assistant turn that asked for a tool, its final call.
+
+    One row read, no result rows joined - the board asks this for every live card, and a name for the tile
+    must not cost a timeline."""
+    row = qone(db, "select tool_calls from messages where session_id = ? and role = 'assistant' "
+                   "and tool_calls is not null order by timestamp desc, id desc limit 1", (session_id,))
+    if not row:
+        return None
+    try:
+        items = json.loads(row[0] or "[]")
+    except Exception:
+        return None
+    for c in reversed(items if isinstance(items, list) else []):
+        name = ((c or {}).get("function") or {}).get("name")
+        if name:
+            return str(name)[:40]
+    return None
+
+
+def live_run_facts(board_db, card_id, run_id, profile=None):
+    """What a run has verifiably done, as the board shows it: its step count and the tool it is in.
+
+    Facts only, never a forecast (issue #9 option 1): the count is the worker session's own tool_call_count
+    and the tool is the last one that session asked for, so the tile says how far the run got and nothing
+    about how long it will take. A run whose session the worker has not recorded yet - one that has barely
+    started - yields {} rather than a step 0 that reads as a stalled worker.
+
+    The board calls this for every live card on every poll, so the run's own profile store is read first and
+    the scan of the other stores is only the fallback."""
+    sid = exact_session_for_run(board_db, card_id, run_id)
+    if not sid:
+        return {}
+    sdb = state_db_for(profile) if profile else ""
+    srow = qone(sdb, "select id, tool_call_count from sessions where id = ?", (sid,)) if sdb else None
+    if srow is None:
+        _prof, sdb, srow = find_session_by_id(sid)
+        steps = int(srow[8] or 0) if srow else None
+    else:
+        steps = int(srow[1] or 0)
+    if steps is None:
+        return {}
+    facts = {"steps": steps}
+    tool = last_tool_of(sdb, sid)
+    if tool:
+        facts["last_tool"] = tool
+    return facts
+
+
 def load_children(db, session_id):
     if not db or not session_id:
         return []

@@ -46,6 +46,17 @@ def check(name, ok, detail=""):
         FAILS.append(name)
 
 
+def profile_exists(name):
+    """The host's own predicate, asked in its own interpreter - the call the
+    dispatcher makes before it claims a ready card."""
+    code = ("import sys;sys.path.insert(0,%r);"
+            "from hermes_cli.profiles import profile_exists as pe;print(pe(%r))"
+            % (crew_proof_board.AGENT, name))
+    p = subprocess.run([crew_proof_board.VENV_PY, "-c", code], capture_output=True,
+                       text=True, timeout=180, encoding="utf-8", errors="replace")
+    return (p.stdout or "").strip() == "True"
+
+
 def seed(card=CARD):
     now = int(time.time())
     conn = sqlite3.connect(KANBAN_DB)
@@ -54,9 +65,10 @@ def seed(card=CARD):
         conn.execute("delete from task_events where task_id = ?", (card,))
         conn.execute("delete from tasks where id = ?", (card,))
         conn.execute("insert into tasks (id, title, body, status, assignee, priority, created_at, "
-                     "model_override, provider_override) values (?,?,?,?,?,0,?,?,?)",
+                     "created_by, model_override, provider_override) values (?,?,?,?,?,0,?,?,?,?)",
                      (card, "PROBE quota wall", "Goal: keep the package work moving\n", "ready",
-                      "crew-worker", now, "claude-opus-5-5", "anthropic"))
+                      crew_card.FIXTURE_ASSIGNEE, now, crew_card.PROBE_OWNER,
+                      "claude-opus-5-5", "anthropic"))
         conn.commit()
     finally:
         conn.close()
@@ -106,6 +118,11 @@ def main():
     import crew_card
 
     seed()
+    # a fixture is never claimable: the dispatcher skips an assignee that is no
+    # Hermes profile (the same check crew_probe_skip_proof.py makes)
+    check("the dispatcher cannot claim a fixture card",
+          not profile_exists(crew_card.FIXTURE_ASSIGNEE), crew_card.FIXTURE_ASSIGNEE)
+
     # 1+2. a wall with a live alternative: recorded, and the card re-pinned
     res = crew_card.reroute_after_wall(CARD, model="claude-opus-5-5", provider="anthropic",
                                       force_pick={"provider": "ai-gateway",
@@ -156,9 +173,13 @@ def main():
     seed(HOOK_CARD)
     out = hook_call(HOOK_CARD)
     row2, ev2 = state(HOOK_CARD)
-    check("the worker hook re-pins the card on a 429",
-          bool((out or {}).get("context")) and row2[1] != "anthropic",
-          "pin=%s/%s ctx=%s" % (row2[1], row2[0], bool((out or {}).get("context"))))
+    if crew_card.router_path() or crew_card.router_plugin_path():
+        check("the worker hook re-pins the card on a 429",
+              bool((out or {}).get("context")) and row2[1] != "anthropic",
+              "pin=%s/%s ctx=%s" % (row2[1], row2[0], bool((out or {}).get("context"))))
+    else:       # no router, so no live alternative: the wall is counted and nothing is invented
+        check("with no router on the box the worker hook invents no new pin on a 429", row2[1] in (None, "", "anthropic"),
+              "pin=%s/%s" % (row2[1], row2[0]))
     before = len(ev2)
     hook_call(HOOK_CARD, status_code=500, error="internal server error")
     _row3, ev3 = state(HOOK_CARD)

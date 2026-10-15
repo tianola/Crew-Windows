@@ -64,10 +64,10 @@ def seed(status, runs):
     try:
         conn.execute(
             "insert into tasks (id, title, body, assignee, status, priority, created_by, created_at, "
-            "workspace_kind) values (?, ?, ?, 'crew-worker', ?, 0, 'probe', ?, 'scratch')",
+            "workspace_kind) values (?, ?, ?, ?, ?, 0, ?, ?, 'scratch')",
             (card, "PROBE never-run card %d" % now,
              "Coordinator: %s/\nGoal: probe card that has not run yet\nRole: worker\n"
-             "proof command: true\n" % crew_card.owner_profile(), status, now))
+             "proof command: true\n" % crew_card.owner_profile(), crew_card.FIXTURE_ASSIGNEE, status, crew_card.PROBE_OWNER, now))
         for i in range(runs):
             conn.execute(
                 "insert into task_runs (task_id, profile, status, started_at, ended_at, outcome, "

@@ -36,6 +36,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 import crew_proof_board  # noqa: E402
+import crew_card  # noqa: E402 - the fixture assignee and the probe marker
 KANBAN_DB = crew_proof_board.proof_db()
 STOP = os.path.join(HERE, "crew_stop.py")
 
@@ -83,7 +84,7 @@ def wk(card, status, run_status=None, pid=None):
     try:
         conn.execute("insert into tasks (id, title, body, status, assignee, created_by, created_at, "
                      "workspace_kind, claim_lock, claim_expires) values (?,?,?,?,?,?,?,'scratch',?,?)",
-                     (card, "PROBE crew_stop " + card, "proof fixture", status, "crew-worker", "probe",
+                     (card, "PROBE crew_stop " + card, "proof fixture", status, crew_card.FIXTURE_ASSIGNEE, crew_card.PROBE_OWNER,
                       now, "proof", now + 900))
         if run_status:
             conn.execute("insert into task_runs (task_id, profile, status, started_at, worker_pid, "
@@ -118,7 +119,7 @@ def alive(pid):
 
 
 def hermes_bin():
-    return os.environ.get("HERMES_BIN") or shutil.which("hermes") or os.path.expanduser("~/.local/bin/hermes")
+    return crew_card.hermes_bin()
 
 
 def promotion_pass():
@@ -196,7 +197,7 @@ def main():
     home = os.path.join(tmp, "hermes")
     prof = os.path.join(home, "profiles", "crew-worker")
     os.makedirs(prof, exist_ok=True)
-    sys.path.insert(0, os.path.expanduser("~/.hermes/hermes-agent"))
+    sys.path.insert(0, crew_proof_board.AGENT)
     from hermes_state import SessionDB                  # the store crew_stop closes through, so a real one
     sdb = SessionDB(db_path=Path(os.path.join(prof, "state.db")))
     sdb.create_session(SESSION, "cli")
