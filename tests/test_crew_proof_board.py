@@ -127,6 +127,18 @@ class RunnerTest(BoardCase):
         os.environ["KANBAN_DB"] = "/somewhere/else.db"
         self.assertEqual(crew_proofs.child_env("crew_graph_flow_check.py")["KANBAN_DB"], "/somewhere/else.db")
 
+    def test_every_child_prints_utf8_even_when_its_stdout_is_captured(self):
+        # A captured child stdout falls back to the user's locale codepage, which on a non-Latin box has no
+        # box-drawing characters: the proof would die on the print before it ever asserted anything.
+        os.environ.pop("PYTHONIOENCODING", None)
+        for name in ("crew_brief_proof.py", "crew_terminal_window_proof.py", "crew_graph_flow_check.py"):
+            self.assertEqual(crew_proofs.child_env(name)["PYTHONIOENCODING"], "utf-8", name)
+
+    def test_an_inherited_encoding_choice_is_not_overwritten(self):
+        os.environ["PYTHONIOENCODING"] = "utf-8:surrogateescape"
+        self.assertEqual(crew_proofs.child_env("crew_brief_proof.py")["PYTHONIOENCODING"],
+                         "utf-8:surrogateescape")
+
     def test_a_proof_on_the_live_board_is_never_picked_without_its_hold_being_lifted(self):
         held = set(crew_proofs.LIVE) | set(crew_proofs.NEEDS_ARGS)
         self.assertTrue(crew_proofs.LIVE_BOARD <= held, crew_proofs.LIVE_BOARD - held)

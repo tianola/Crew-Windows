@@ -92,10 +92,19 @@ def choose(args):
 
 def child_env(name):
     """The env one proof runs in: the crew-proofs board pinned, except the live-service proofs (LIVE_BOARD)
-    and the read-only live readers."""
+    and the read-only live readers.
+
+    UTF-8 stdout is load-bearing, not cosmetic: this runner captures every child, and a captured Python
+    stdout falls back to the user's locale codepage (cp1253 on a Greek box, cp1252 elsewhere), which has no
+    box-drawing characters - so a proof that prints the terminal window it just rendered dies on
+    UnicodeEncodeError before it can assert anything. A cron capture is the same path.
+    """
     if name in LIVE_BOARD or name in LIVE_READERS:
-        return dict(os.environ)
-    return dict(os.environ, **crew_proof_board.proofs_env())
+        env = dict(os.environ)
+    else:
+        env = dict(os.environ, **crew_proof_board.proofs_env())
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    return env
 
 
 def run_one(name, timeout, extra=()):
