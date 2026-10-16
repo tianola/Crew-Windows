@@ -3,7 +3,7 @@
   "label": "Crew",
   "description": "Autonomous proof-gated coordination board and live flow graph",
   "icon": "Users",
-  "version": "0.9.10",
+  "version": "0.9.11",
   "tab": {
     "path": "/crew",
     "position": "after:openspec"

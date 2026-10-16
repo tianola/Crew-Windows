@@ -7,7 +7,7 @@
 // postMessage({crew: 1, id, method, path, body}); handleFrameMessage checks who sent it and what it asks for,
 // calls ctx.rest, and answers the same way.
 
-import { ROUTES_AREA, SIDEBAR_NAV_AREA, Button, SandboxedFrame } from '@hermes/plugin-sdk'
+import { ROUTES_AREA, SIDEBAR_NAV_AREA, SandboxedFrame } from '@hermes/plugin-sdk'
 import { jsx, jsxs } from 'react/jsx-runtime'
 import { useEffect, useRef, useState } from 'react'
 
@@ -33,6 +33,16 @@ export function routeFor(method, path) {
     if (m) return { path: r.to(m), out: r.out }
   }
   return null
+}
+
+// A chat session the card page may ask to open: a profile name and a session id.
+const PROFILE_RE = /^[A-Za-z0-9_.-]{1,64}$/
+const SESSION_RE = /^[A-Za-z0-9_-]{1,128}$/
+
+export function openSessionTarget(v) {
+  if (!v || typeof v !== 'object' || typeof v.profile !== 'string' || typeof v.session !== 'string') return null
+  if (v.session === 'no-session' || !PROFILE_RE.test(v.profile) || !SESSION_RE.test(v.session)) return null
+  return { profile: v.profile, session: v.session }
 }
 
 export function navTarget(path) {
@@ -66,6 +76,14 @@ export async function handleFrameMessage(ctx, frameWindow, event, setView) {
   if (m.navigate !== undefined) {
     const view = navTarget(m.navigate)
     if (view) setView(view)
+    return
+  }
+  if (m.openSession !== undefined) {
+    // The Desktop plugin ctx has no session-open call. window.hermesDesktop.openSessionWindow is the preload API
+    // (apps/desktop/electron/preload.ts:55); it opens the session in its own window.
+    const t = openSessionTarget(m.openSession)
+    const open = globalThis.window && window.hermesDesktop && window.hermesDesktop.openSessionWindow
+    if (t && typeof open === 'function') open(t.session, { profile: t.profile })
     return
   }
   const id = m.id
@@ -103,12 +121,8 @@ function CrewPage({ ctx }) {
 
   return jsxs('div', {
     className: 'flex h-full min-h-0 w-full flex-col',
+    // No bar above the page: the card page carries its own link back to the board.
     children: [
-      view.page === 'card'
-        ? jsx('div', { className: 'flex shrink-0 items-center px-3 py-1.5', children: jsx(Button, {
-            size: 'sm', variant: 'ghost', onClick: () => setView({ page: 'board', id: null, all: false }),
-            children: 'Back to board' }) })
-        : null,
       error
         ? jsx('div', { className: 'p-4 text-sm text-(--ui-text-tertiary)', children: 'Crew could not load: ' + error })
         : src

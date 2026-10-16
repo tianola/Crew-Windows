@@ -9,7 +9,7 @@
 // Inside the iframe, the bridge script plugin_api.py injects routes the page's
 // own requests through the same authedFetch and turns a click on a board/card
 // link into a "crew:navigate" message, which this component answers by fetching
-// that page the same way. No credential is ever placed in the iframe.
+// that page the same way; a "crew:open-session" message opens the chat a card came from. No credential is ever placed in the iframe.
 (function () {
   "use strict";
 
@@ -21,6 +21,9 @@
   var API = "/api/plugins/crew/";
   // The pages the tab may show: the board (optionally ?all=1) and one card's graph.
   var PAGE_RE = /^(board|card\/[A-Za-z0-9_-]+)(\?all=1)?$/;
+  // A chat session the card page may ask to open: a profile name and a session id.
+  var PROFILE_RE = /^[A-Za-z0-9_.-]{1,64}$/;
+  var SESSION_RE = /^[A-Za-z0-9_-]{1,128}$/;
 
   function themeQuery() {
     var style = window.getComputedStyle(document.documentElement);
@@ -83,6 +86,14 @@
         var frame = iframeRef.current;
         if (!frame || e.source !== frame.contentWindow || e.origin !== window.location.origin) return;
         var d = e.data;
+        if (d && d.type === "crew:open-session") {
+          if (typeof d.profile === "string" && typeof d.session === "string" && PROFILE_RE.test(d.profile) && SESSION_RE.test(d.session)) {
+            // The SDK has no navigate call, so a full navigation to the chat page is the robust way.
+            window.location.assign((window.__HERMES_BASE_PATH__ || "") + "/chat?resume=" + encodeURIComponent(d.session) +
+              "&profile=" + encodeURIComponent(d.profile));
+          }
+          return;
+        }
         if (!d || d.type !== "crew:navigate" || typeof d.path !== "string" || !PAGE_RE.test(d.path)) return;
         setPage(d.path);
       }

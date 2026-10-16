@@ -104,6 +104,21 @@ await send(frameWin, { crew: 1, navigate: 'card/../x' })
 await send(foreign, { crew: 1, navigate: 'board' })
 eq(views, [{ page: 'card', id: 't_77', all: false }])
 
+// --- open chat: the target parser and the handler (the preload API is the only way to open a session)
+const OT = mod.openSessionTarget
+eq(OT({ profile: 'p1', session: 's_1' }), { profile: 'p1', session: 's_1' })
+for (const v of [{ profile: 'p1', session: 'no-session' }, { profile: 'bad profile', session: 's' }, { profile: 'p', session: 'a/b' },
+  { profile: 'p', session: '' }, { profile: 5, session: 's' }, 'p1/s_1', null, undefined]) eq(OT(v), null, JSON.stringify(v))
+const opened = []
+globalThis.window = { hermesDesktop: { openSessionWindow: (id, o) => opened.push([id, o]) } }
+await send(frameWin, { crew: 1, openSession: { profile: 'p1', session: 's_1' } })
+eq(opened, [['s_1', { profile: 'p1' }]])
+await send(foreign, { crew: 1, openSession: { profile: 'p1', session: 's_2' } })
+await send(frameWin, { crew: 1, openSession: { profile: 'p1', session: 'no-session' } })
+await send(frameWin, { crew: 1, openSession: { profile: 'p1', session: '../x' } })
+eq(opened.length, 1, 'foreign source or bad session opens nothing')
+delete globalThis.window
+
 ctx.answer = () => { throw new Error('boom') }
 await send(frameWin, { crew: 1, id: 8, method: 'GET', path: 'board.json' })
 eq(posted.pop(), [{ crew: 1, id: 8, error: 'boom' }, '*'])
@@ -116,24 +131,24 @@ globalThis.__hooks = { n: 0, state: {}, sets: [], effects: [] }
 let tree = page.render()          // CrewPage element, not yet rendered: call the component
 const render = () => { globalThis.__hooks.n = 0; globalThis.__hooks.effects = []; return tree.type(tree.props) }
 let out = render()
-eq(out.props.children[1], null, 'nothing is shown before the page arrives')
+eq(out.props.children[0], null, 'nothing is shown before the page arrives')
 rests.length = 0
 globalThis.__hooks.effects[0]()   // load effect
 await new Promise(r => setTimeout(r, 5))
 eq(rests.at(-1), ['/embed/board', undefined])
 out = render()
-const frame = out.props.children[1]
+const frame = out.props.children[0]
 eq(frame.type, 'SandboxedFrame')
 ok(frame.props.src.startsWith('data:text/html;charset=utf-8;base64,'), 'frame src is a data: URL')
 eq(Buffer.from(frame.props.src.split(',')[1], 'base64').toString('utf8'), html, 'data URL round-trips the page, UTF-8 intact')
 ok(!/allow-same-origin|sandbox/.test(JSON.stringify(frame.props)), 'no sandbox override from the plugin')
-eq(out.props.children[0], null, 'no back control on the board')
+eq(out.props.children.length, 1, 'nothing above the frame: the page carries its own board link')
 globalThis.__hooks.effects[1]()
 eq([listeners.at(-1).target === globalThis.window, listeners.at(-1).type], [true, 'message'])
-// a card view shows the back control and loads /embed/card/<id>
+// a card view loads /embed/card/<id>, still with nothing above the frame
 globalThis.__hooks.state[0] = { page: 'card', id: 't_77', all: false }
 out = render()
-eq(out.props.children[0].props.children.props.children, 'Back to board')
+eq(out.props.children[0].type, 'SandboxedFrame')
 globalThis.__hooks.effects[0]()
 await new Promise(r => setTimeout(r, 5))
 eq(rests.at(-1)[0], '/embed/card/t_77')

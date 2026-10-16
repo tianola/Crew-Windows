@@ -132,7 +132,7 @@ def _tab_csp(page_csp: str) -> str:
 # left alone. Every request the page makes - fetch, XMLHttpRequest, avatar
 # images - goes through the parent's authedFetch, and a click on a board/card
 # link asks the tab (postMessage) to load that page, because a plain iframe
-# navigation carries no session header.
+# navigation carries no session header; the card's open chat button asks it to open a chat session.
 _BRIDGE_JS = r"""(function () {
   var parent = window.parent, sdk;
   try { sdk = parent !== window && parent.__HERMES_PLUGIN_SDK__; } catch (e) { sdk = null; }
@@ -175,6 +175,7 @@ _BRIDGE_JS = r"""(function () {
   window.XMLHttpRequest = FX;
   function nav(path) { parent.postMessage({ type: "crew:navigate", path: path }, origin); }
   window.__crewNav = function (u) { var r = rel(u); if (r) nav(r.path + r.search); };
+  window.__crewOpenChat = function (profile, session) { parent.postMessage({ type: "crew:open-session", profile: String(profile), session: String(session) }, origin); };
   document.addEventListener("click", function (e) {
     if (e.defaultPrevented || e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     var a = e.target && e.target.closest ? e.target.closest("a[href]") : null;
@@ -370,6 +371,7 @@ _EMBED_BRIDGE_JS = r"""(function () {
   window.XMLHttpRequest = FX;
   function nav(path) { send({ navigate: path }); }
   window.__crewNav = function (u) { var p = rel(u); if (p !== null) nav(p); };
+  window.__crewOpenChat = function (profile, session) { send({ openSession: { profile: String(profile), session: String(session) } }); };
   document.addEventListener("click", function (e) {
     if (e.defaultPrevented || e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     var a = e.target && e.target.closest ? e.target.closest("a[href]") : null;

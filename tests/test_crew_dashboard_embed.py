@@ -75,6 +75,7 @@ class EmbedRouteTests(RealBoardCase):
         self.assertIn("(function () {\n  if (window.parent === window) return;", plugin_api._EMBED_BRIDGE_JS)
         import crew_graph_serve
         self.assertNotIn("crew-desktop-bridge", crew_graph_serve.board_page(False, "n"))
+        self.assertNotIn("__crewOpenChat = ", crew_graph_serve.board_page(False, "n"))   # standalone: no bridge, no button host
         tab = self.client.get(API + "/board")
         self.assertNotIn("crew-desktop-bridge", tab.text)
         self.assertIn('<base href="/api/plugins/crew/">', tab.text)   # the tab proxy is unchanged
@@ -87,6 +88,8 @@ class EmbedRouteTests(RealBoardCase):
         self.assertNotRegex(page, r"<base\b")
         self.assertIn('window.__crewNav ? window.__crewNav("board")', page)   # the "o" shortcut goes through the bridge
         self.assertNotIn('window.location.href = "/";', page)
+        self.assertIn("window.__crewOpenChat = function (profile, session)", page)
+        self.assertIn("cardCoOpen", page)
 
     def test_embed_card_id_validation(self):
         for bad in ("t_1.json", "t_1%2Fx", "..", "t_1.html"):

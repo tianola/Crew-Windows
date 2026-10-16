@@ -7,7 +7,10 @@ against known inputs.
 """
 import json
 import os
+import re
+import shutil
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -231,6 +234,23 @@ class LivenessRuleTests(unittest.TestCase):
         # The json already carries card_id at root level; nodes are reachable from it
         sample = {"card_id": "t_x", "nodes": [{"id": "run:1", "kind": "run"}]}
         self.assertEqual(sample["card_id"], "t_x")
+
+
+class CoordinatorTargetTests(unittest.TestCase):
+    """coordinatorTarget (card.js) turns the body's Coordinator value into the chat to open, run under node."""
+
+    def test_cases(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node not installed")
+        src = open(os.path.join(os.path.dirname(HERE), "scripts", "crew_dashboard", "card.js"), encoding="utf-8").read()
+        fn = re.search(r"function coordinatorTarget\(value\)\{.*?\n\}\n", src, re.S).group(0)
+        cases = [("owner-chat/20261015T1200-abc", {"profile": "owner-chat", "session": "20261015T1200-abc"}),
+                 ("va/no-session", None), ("bad profile/x", None), ("", None), ("a/b/c", None), ("va/", None)]
+        script = fn + "\nconsole.log(JSON.stringify(%s.map(coordinatorTarget)));" % json.dumps([c[0] for c in cases])
+        out = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=30)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(json.loads(out.stdout), [c[1] for c in cases])
 
 
 if __name__ == "__main__":

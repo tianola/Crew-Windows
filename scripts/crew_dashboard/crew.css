@@ -204,6 +204,9 @@ body.page-card{display:flex;flex-direction:column;background:var(--crew-bg);colo
   font:inherit;font-size:10px;line-height:14px;padding:0 0 0 5px;cursor:pointer;}
 .page-card #sitfields .copy:hover{color:var(--crew-text-1);}
 .page-card #sitfields .copy:focus-visible{outline:2px solid var(--crew-tone-ready);outline-offset:1px;}
+/* The open chat button sits on a row of its own, in the copy buttons' quiet style, with no divider before it. */
+.page-card #sitfields .brk{flex-basis:100%;height:0;}
+.page-card #sitfields .openrow .copy{border-left:0;padding-left:0;}
 /* the pending reason and the repeated-stop note: callouts in their tone */
 .page-card #sitbox,.page-card #spinbox{--tone:var(--crew-tone-blocked);margin:0;border:1px solid color-mix(in srgb, var(--tone) 22%, transparent);
   border-left:2px solid var(--tone);border-radius:6px;background:color-mix(in srgb, var(--tone) 7%, transparent);

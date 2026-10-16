@@ -938,6 +938,14 @@ function updateStatus(){
   fb.className = "pill btn" + (follow ? " on" : "");
 }
 
+// The chat a card came from, out of the body's "<profile>/<session id>" coordinator value. null when the
+// profile or the id is not a plain token, or when the card never had a session ("<profile>/no-session").
+function coordinatorTarget(value){
+  var m = /^([^\/]*)\/([^\/]*)$/.exec(String(value || ""));
+  if(!m || m[2] === "no-session") return null;
+  if(!/^[A-Za-z0-9_.-]{1,64}$/.test(m[1]) || !/^[A-Za-z0-9_-]{1,128}$/.test(m[2])) return null;
+  return {profile: m[1], session: m[2]};
+}
 // A card's own fields, one labelled row each. The two values the owner takes off the page carry a
 // copy button, and the flash survives a redraw (the page re-renders on every poll).
 function sitFieldRow(box, label, value, copy){
@@ -980,6 +988,23 @@ function renderSitFields(){
     {id: "cardIdCopy", value: state.card_id || "", title: "copy the kanban id"});
   sitFieldRow(box, "coordinator", state.coordinator || "",
     {id: "cardCoCopy", value: state.coordinator || "", title: "copy the coordinator session"});
+  // The open chat button, on its own row, exists only where the host page offers __crewOpenChat (the
+  // dashboard tab or the Hermes Desktop bridge); a standalone page has no chat to open.
+  var t = coordinatorTarget(state.coordinator);
+  if(t && typeof window.__crewOpenChat === "function"){
+    var brk = document.createElement("span"); brk.className = "brk";   // the row starts a new line, at its own width
+    box.appendChild(brk);
+    var r = document.createElement("span"); r.className = "fp openrow";
+    var open = document.createElement("button");
+    open.type = "button"; open.className = "copy"; open.id = "cardCoOpen";
+    open.textContent = "open chat \u2197";
+    open.title = "open the chat this card came from"; open.setAttribute("aria-label", open.title);
+    open.addEventListener("click", function(e){
+      e.stopPropagation();
+      window.__crewOpenChat(t.profile, t.session);
+    });
+    r.appendChild(open); box.appendChild(r);
+  }
 }
 // The run counts as a key-number grid (the panel's KPI row), right-aligned on the top event line; a count
 // above zero takes its state's tone.

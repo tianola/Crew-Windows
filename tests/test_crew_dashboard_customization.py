@@ -245,6 +245,8 @@ class CrewDashboardCustomizationTests(RealBoardCase):
         self.assertEqual(resp.status_code, 200, resp.text)
         self.assertIn('<base href="/api/plugins/crew/">', resp.text)
         self.assertIn('window.__crewNav ? window.__crewNav("board")', resp.text)
+        self.assertIn("window.__crewOpenChat = function (profile, session)", resp.text)   # the bridge
+        self.assertIn("cardCoOpen", resp.text)                                            # the card script
         missing = self.client.get("/api/plugins/crew/card/t_nosuchcard")
         self.assertEqual(missing.status_code, 404)
         self.assertIn("no graph for t_nosuchcard", missing.text)
