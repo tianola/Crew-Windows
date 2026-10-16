@@ -165,7 +165,27 @@ def changed_since(rev):
         names |= {os.path.basename(x) for x in more}
     known = set(candidates())
     picked = [n for n in known if n in names]
-    for stem in {os.path.splitext(n)[0] for n in names if n.endswith(".py") and n not in known}:
+    tokens = set()
+    for n in names:
+        if n in known:
+            continue
+        tokens.add(n)                        # a proof that names the file itself (board.js is named by three)
+        if n.endswith(".py"):
+            tokens.add(os.path.splitext(n)[0])
+        else:
+            # no proof reads a stylesheet, so hop through the module that renders it: crew.css is named by
+            # crew_graph_serve.py, and the proofs name crew_graph_serve. Without this a dashboard asset
+            # change selects nothing, which is how a CSS edit reaches a board with no evidence behind it.
+            for pyname in sorted(os.listdir(HERE)):
+                if not pyname.endswith(".py"):
+                    continue
+                try:
+                    body = open(os.path.join(HERE, pyname), encoding="utf-8").read()
+                except OSError:
+                    continue
+                if n in body:
+                    tokens.add(os.path.splitext(pyname)[0])
+    for stem in sorted(tokens):
         for proof in sorted(known):
             if proof in picked:
                 continue
